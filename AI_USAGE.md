@@ -1,0 +1,5 @@
+# AI Usage Log
+
+| Date/commit | Tool | Prompt | Disposition | What changed and why (if modified) | In my own words how this works |
+|---|---|---|---|---|---|
+| 2026-09-28 / commits "Scaffold app entry point, config and db helpers…", "Add watchlist domain…", "Add watchlist routes, templates and unit tests" | Claude Code (Claude Opus 5.5) | Build the session-1 scaffold from my spec: requirements.txt and .gitignore; `Config` dataclass reading HOST/PORT/DATA_DIR/PRICE_API_KEY/POLL_INTERVAL_SECONDS/PRICE_CACHE_TTL_SECONDS/SECRET_KEY from env with a `db_path` property; `db.py` with `get_connection` (Row factory, foreign_keys, busy_timeout) and `init_db`; `ports.py` with the `PriceSource`/`WatchlistReader` Protocols and `PriceUnavailable`; `app.py` serving via waitress with stdout logging; `create_app` with `/health`; the watchlist domain (schema, repository, `WatchlistService` with ticker normalization/validation, `DuplicateTickerError`, `InvalidWatchlistItemError`), Blueprint routes, templates, and pytest tests; ADR entry 1 | Accepted | | TODO — Issam to fill in after reading the code |

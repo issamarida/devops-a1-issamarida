@@ -4,13 +4,17 @@ create_app is the only place allowed to import more than one domain and
 wire concrete classes together.
 """
 
-from flask import Flask
+from flask import Flask, redirect, url_for
 
+from pricewatch import watchlist
 from pricewatch.config import Config
 from pricewatch.db import get_connection, init_db
+from pricewatch.watchlist.repository import WatchlistRepository
+from pricewatch.watchlist.routes import create_watchlist_blueprint
+from pricewatch.watchlist.service import WatchlistService
 
-SCHEMA_PATHS = []
-REQUIRED_TABLES = []
+SCHEMA_PATHS = [watchlist.SCHEMA_PATH]
+REQUIRED_TABLES = ["watchlist_items"]
 
 
 def create_app(config: Config) -> Flask:
@@ -18,6 +22,13 @@ def create_app(config: Config) -> Flask:
 
     app = Flask(__name__)
     app.secret_key = config.secret_key
+
+    watchlist_service = WatchlistService(WatchlistRepository(config.db_path))
+    app.register_blueprint(create_watchlist_blueprint(watchlist_service))
+
+    @app.get("/")
+    def index():
+        return redirect(url_for("watchlist.list_items"))
 
     @app.get("/health")
     def health():
