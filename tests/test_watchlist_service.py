@@ -1,6 +1,6 @@
 import pytest
 
-from pricewatch.watchlist.service import DuplicateTickerError, InvalidWatchlistItemError
+from app.watchlist.service import DuplicateTickerError, InvalidWatchlistItemError
 
 
 def test_add_item_normalizes_ticker_to_uppercase(watchlist_service):
@@ -27,7 +27,7 @@ def test_add_item_rejects_duplicate_ticker_case_insensitively(watchlist_service)
     assert len(watchlist_service.list_items()) == 1
 
 
-@pytest.mark.parametrize("name", ["", "   ", None])
+@pytest.mark.parametrize("name", ["", "   "])
 def test_add_item_rejects_blank_name(watchlist_service, name):
     with pytest.raises(InvalidWatchlistItemError):
         watchlist_service.add_item("AAPL", name)

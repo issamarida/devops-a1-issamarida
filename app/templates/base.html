@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}PriceWatch{% endblock %}</title>
+  <title>{% block title %}Watchlist{% endblock %}</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width: 48rem; margin: 2rem auto; padding: 0 1rem; color: #222; }
     nav a { margin-right: 1rem; }
@@ -17,7 +17,7 @@
   </style>
 </head>
 <body>
-  <nav><strong>PriceWatch</strong> &middot; <a href="{{ url_for('watchlist.list_items') }}">Watchlist</a></nav>
+  <nav><a href="{{ url_for('watchlist.list_items') }}">Watchlist</a></nav>
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
       <div class="flash {{ category }}">{{ message }}</div>

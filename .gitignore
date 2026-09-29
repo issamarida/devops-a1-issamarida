@@ -217,6 +217,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# PriceWatch
-# SQLite database lives here at runtime (see DATA_DIR in pricewatch/config.py)
+# App data
+# SQLite database lives here at runtime (see DATA_DIR in app/config.py)
 data/

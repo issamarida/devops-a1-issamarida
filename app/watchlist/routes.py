@@ -1,8 +1,8 @@
-"""HTTP layer for the watchlist: parses forms, calls the service, renders."""
+"""Watchlist pages. Reads the form, calls the service, shows the result."""
 
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
-from pricewatch.watchlist.service import (
+from app.watchlist.service import (
     DuplicateTickerError,
     InvalidWatchlistItemError,
     WatchlistService,
@@ -24,18 +24,17 @@ def create_watchlist_blueprint(service: WatchlistService) -> Blueprint:
                 request.form.get("name", ""),
                 request.form.get("notes", ""),
             )
-        except (InvalidWatchlistItemError, DuplicateTickerError) as exc:
-            flash(str(exc), "error")
-        else:
-            flash(f"Added {item.ticker} to the watchlist.", "success")
+            flash(f"Added {item.ticker}.", "success")
+        except (InvalidWatchlistItemError, DuplicateTickerError) as error:
+            flash(str(error), "error")
         return redirect(url_for("watchlist.list_items"))
 
     @bp.post("/watchlist/<ticker>/delete")
     def delete_item(ticker):
         if service.remove_item(ticker):
-            flash(f"Removed {ticker.upper()} from the watchlist.", "success")
+            flash(f"Removed {ticker.upper()}.", "success")
         else:
-            flash(f"{ticker.upper()} is not on the watchlist.", "error")
+            flash(f"{ticker.upper()} isn't on the watchlist.", "error")
         return redirect(url_for("watchlist.list_items"))
 
     return bp

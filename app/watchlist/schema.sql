@@ -1,4 +1,4 @@
--- Watchlist domain: owned exclusively by pricewatch/watchlist/.
+-- Watchlist domain. Only app/watchlist/ reads or writes this table.
 CREATE TABLE IF NOT EXISTS watchlist_items (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     ticker   TEXT    NOT NULL UNIQUE,

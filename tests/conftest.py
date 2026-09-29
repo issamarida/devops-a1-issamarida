@@ -1,14 +1,14 @@
 import pytest
 
-from pricewatch.db import init_db
-from pricewatch.watchlist import SCHEMA_PATH as WATCHLIST_SCHEMA
-from pricewatch.watchlist.repository import WatchlistRepository
-from pricewatch.watchlist.service import WatchlistService
+from app.db import init_db
+from app.watchlist import SCHEMA_PATH as WATCHLIST_SCHEMA
+from app.watchlist.repository import WatchlistRepository
+from app.watchlist.service import WatchlistService
 
 
 @pytest.fixture
 def db_path(tmp_path):
-    path = tmp_path / "data" / "pricewatch.db"
+    path = tmp_path / "data" / "app.db"
     init_db(path, [WATCHLIST_SCHEMA])
     return path
 

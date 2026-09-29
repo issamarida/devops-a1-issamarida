@@ -1,13 +1,12 @@
-# PriceWatch
+# Stock watchlist and price alerts
 
-A stock watchlist and price-alert web app (Assignment 1). It is a single Flask
-process served by waitress, with SQLite storage.
+Assignment 1. One Flask process served by waitress. Data lives in SQLite.
 
-Current status: the watchlist domain is implemented. The alerts domain is next.
+Right now only the watchlist works and alerts come next.
 
 ## Setup
 
-Requires Python 3.10+.
+You need Python 3.10 or newer.
 
 ```sh
 git clone https://github.com/issamarida/devops-a1-issamarida.git
@@ -23,43 +22,41 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Then open http://localhost:8080. You don't need to set anything up first: the
-data directory and tables are created automatically on startup. `GET /health`
-returns 200 once the schema exists.
+Open http://localhost:8080. There's nothing to set up first. The app makes the data folder and tables when it starts. `GET /health` returns 200 once the tables exist.
 
-## Configuration (environment variables, all optional)
+## Settings
 
-| Variable                  | Default                        | Purpose                                   |
-|---------------------------|--------------------------------|-------------------------------------------|
-| `HOST`                    | `0.0.0.0`                      | Bind address                              |
-| `PORT`                    | `8080`                         | Listen port                               |
-| `DATA_DIR`                | `./data`                       | Directory holding the SQLite file         |
-| `PRICE_API_KEY`           | unset                          | Key for the market price API (upcoming)   |
-| `POLL_INTERVAL_SECONDS`   | `60`                           | Alert evaluation interval (upcoming)      |
-| `PRICE_CACHE_TTL_SECONDS` | `30`                           | Price cache lifetime (upcoming)           |
-| `SECRET_KEY`              | `dev-only-not-for-production`  | Flask session signing (flash messages)    |
+All of these are environment variables and all are optional.
 
-The database is always at `$DATA_DIR/pricewatch.db`. Logs go to stdout only.
+| Variable                  | Default                        | What it does                          |
+|---------------------------|--------------------------------|---------------------------------------|
+| `HOST`                    | `0.0.0.0`                      | Address to listen on                  |
+| `PORT`                    | `8080`                         | Port to listen on                     |
+| `DATA_DIR`                | `./data`                       | Folder for the SQLite file            |
+| `PRICE_API_KEY`           | unset                          | Price API key (used later by alerts)  |
+| `POLL_INTERVAL_SECONDS`   | `60`                           | How often alerts get checked (later)  |
+| `PRICE_CACHE_TTL_SECONDS` | `30`                           | How long a price is cached (later)    |
+| `SECRET_KEY`              | `dev-only-not-for-production`  | Signs the session for flash messages  |
+
+The database file is `$DATA_DIR/app.db`. Logs go to stdout.
 
 ## Tests and coverage
 
 ```sh
-pytest --cov=pricewatch --cov-report=term-missing
+pytest --cov=app --cov-report=term-missing
 ```
 
-Latest result (2026-09-28): 15 passed. Coverage is 67% for the whole package.
-The watchlist service is at 94% and the watchlist repository at 90%. The
-uncovered lines are mostly the HTTP routes and the composition root.
+Last run (2026-09-29): 14 passed. Total coverage is 70%. The watchlist service and repository are both at 100%. Most of what's left uncovered is the Flask routes and `create_app`.
 
-## Project layout
+## Files
 
 ```
-app.py                     entry point (python app.py)
-pricewatch/__init__.py     create_app: the composition root, wires domains together
-pricewatch/config.py       env-var configuration
-pricewatch/db.py           sqlite3 connection + schema init
-pricewatch/ports.py        neutral Protocols shared between domains
-pricewatch/watchlist/      watchlist domain (schema, repository, service, routes)
-pricewatch/templates/      Jinja2 templates
-tests/                     pytest unit tests
+app.py                start the app: python app.py
+app/__init__.py       create_app builds the app and connects the domains
+app/config.py         reads settings from env vars
+app/db.py             opens SQLite connections and creates tables
+app/ports.py          interfaces shared between domains
+app/watchlist/        watchlist domain (schema, repository, service, routes)
+app/templates/        HTML templates
+tests/                unit tests
 ```
