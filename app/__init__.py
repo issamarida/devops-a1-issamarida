@@ -3,6 +3,8 @@
 This is the only file allowed to import more than one domain.
 """
 
+from pathlib import Path
+
 from flask import Flask, redirect, url_for
 
 from app.config import Config
@@ -12,9 +14,15 @@ from app.watchlist.repository import WatchlistRepository
 from app.watchlist.routes import create_watchlist_blueprint
 from app.watchlist.service import WatchlistService
 
+# Every schema file init_db runs. tests/conftest.py uses this same list.
+SCHEMA_FILES = [
+    WATCHLIST_SCHEMA,
+    Path(__file__).parent / "alerts" / "schema.sql",
+]
+
 
 def create_app(config: Config) -> Flask:
-    init_db(config.db_path, [WATCHLIST_SCHEMA])
+    init_db(config.db_path, SCHEMA_FILES)
 
     app = Flask(__name__)
     app.secret_key = config.secret_key

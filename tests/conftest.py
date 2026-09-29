@@ -1,7 +1,7 @@
 import pytest
 
+from app import SCHEMA_FILES
 from app.db import init_db
-from app.watchlist import SCHEMA_PATH as WATCHLIST_SCHEMA
 from app.watchlist.repository import WatchlistRepository
 from app.watchlist.service import WatchlistService
 
@@ -9,7 +9,7 @@ from app.watchlist.service import WatchlistService
 @pytest.fixture
 def db_path(tmp_path):
     path = tmp_path / "data" / "app.db"
-    init_db(path, [WATCHLIST_SCHEMA])
+    init_db(path, SCHEMA_FILES)
     return path
 
 
