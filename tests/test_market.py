@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 import pytest
 import requests
 
+from app.market.cache import CachedPriceSource
 from app.market.demo import DemoPriceSource
 from app.market.finnhub import QUOTE_URL, FinnhubSource
 from app.ports import PriceUnavailable
@@ -112,3 +113,73 @@ def test_finnhub_failure_raises_price_unavailable_without_the_key(get_behaviour)
     assert FAKE_KEY not in repr(error)
     assert error.__cause__ is None
     assert error.__suppress_context__
+
+
+# Cache
+
+
+class CountingSource:
+    """Returns a new price on every call so a refetch is easy to spot."""
+
+    def __init__(self):
+        self.calls = []
+        self.fail = False
+
+    def get_price(self, ticker):
+        self.calls.append(ticker)
+        if self.fail:
+            raise PriceUnavailable(ticker)
+        return 100.0 + len(self.calls)
+
+
+def test_cache_hit_inside_ttl_makes_one_underlying_call():
+    clock = FakeClock(0)
+    source = CountingSource()
+    cached = CachedPriceSource(source, ttl_seconds=30, clock=clock)
+
+    first = cached.get_price("AAPL")
+    clock.now = 29
+    assert cached.get_price("AAPL") == first
+    assert source.calls == ["AAPL"]
+
+
+def test_cache_refetches_after_the_ttl():
+    clock = FakeClock(0)
+    source = CountingSource()
+    cached = CachedPriceSource(source, ttl_seconds=30, clock=clock)
+
+    first = cached.get_price("AAPL")
+    clock.now = 31
+    second = cached.get_price("AAPL")
+    assert second != first
+    assert source.calls == ["AAPL", "AAPL"]
+
+
+def test_cache_is_per_ticker():
+    source = CountingSource()
+    cached = CachedPriceSource(source, ttl_seconds=30, clock=FakeClock(0))
+
+    assert cached.get_price("AAPL") != cached.get_price("MSFT")
+    assert source.calls == ["AAPL", "MSFT"]
+
+
+def test_cache_does_not_store_a_failure():
+    source = CountingSource()
+    source.fail = True
+    cached = CachedPriceSource(source, ttl_seconds=30, clock=FakeClock(0))
+
+    with pytest.raises(PriceUnavailable):
+        cached.get_price("AAPL")
+
+    source.fail = False
+    assert cached.get_price("AAPL") == 102.0
+    assert source.calls == ["AAPL", "AAPL"]
+
+
+def test_cache_with_ttl_zero_always_refetches():
+    source = CountingSource()
+    cached = CachedPriceSource(source, ttl_seconds=0, clock=FakeClock(0))
+
+    cached.get_price("AAPL")
+    cached.get_price("AAPL")
+    assert source.calls == ["AAPL", "AAPL"]
