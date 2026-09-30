@@ -27,3 +27,17 @@ Decision: Alerts only talks to two small interfaces in app/ports.py, WatchlistRe
 Alternatives considered: Importing WatchlistService straight into alerts, or a foreign key from alert_rules to watchlist_items. Both were rejected because splitting alerts into its own service would then mean rewriting it.
 
 Consequences: Alerts can move to its own service by swapping WatchlistReader for an HTTP client. The cost is no joins across domains, and rules for a removed ticker stay in the table as dormant rows.
+
+## 3. Trigger history as its own snapshot table
+
+Date: 2026-09-30
+
+Status: Decided
+
+Context: A user needs to see which alerts fired, at what price and when, even after deleting the rule. The schema also has to keep each domain's data apart.
+
+Decision: The schema has three tables: watchlist_items for the watchlist, and alert_rules plus alert_events for alerts. alert_events copies the ticker, condition, threshold and observed price when a rule fires, and its rule_id becomes NULL if that rule is deleted later.
+
+Alternatives considered: Storing the last fire time and price on the alert_rules row. Rejected because it only keeps one firing and loses it when the rule is deleted. A foreign key from alert_rules.ticker to watchlist_items was already rejected in ADR-2.
+
+Consequences: History survives rule deletion and can be listed without a join. Some values are duplicated between alert_rules and alert_events.
