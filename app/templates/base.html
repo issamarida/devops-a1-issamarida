@@ -14,10 +14,14 @@
     .flash { padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px; }
     .flash.error { background: #fde2e2; }
     .flash.success { background: #e2f5e2; }
+    .banner { padding: 0.5rem; margin: 0.5rem 0; border-radius: 4px; background: #fff4cc; }
   </style>
 </head>
 <body>
-  <nav><a href="{{ url_for('watchlist.list_items') }}">Watchlist</a></nav>
+  <nav>
+    <a href="{{ url_for('watchlist.list_items') }}">Watchlist</a>
+    <a href="{{ url_for('alerts.list_rules') }}">Alerts</a>
+  </nav>
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% for category, message in messages %}
       <div class="flash {{ category }}">{{ message }}</div>

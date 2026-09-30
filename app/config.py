@@ -25,7 +25,8 @@ def load_config() -> Config:
         host=os.environ.get("HOST", "0.0.0.0"),
         port=int(os.environ.get("PORT", "8080")),
         data_dir=Path(os.environ.get("DATA_DIR", "./data")),
-        price_api_key=os.environ.get("PRICE_API_KEY"),
+        # An empty PRICE_API_KEY counts as not set.
+        price_api_key=os.environ.get("PRICE_API_KEY") or None,
         poll_interval_seconds=int(os.environ.get("POLL_INTERVAL_SECONDS", "60")),
         price_cache_ttl_seconds=int(os.environ.get("PRICE_CACHE_TTL_SECONDS", "30")),
         secret_key=os.environ.get("SECRET_KEY", "dev-only-not-for-production"),
