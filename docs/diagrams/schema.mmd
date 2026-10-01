@@ -1,0 +1,30 @@
+erDiagram
+    watchlist_items {
+        INTEGER id PK "AUTOINCREMENT"
+        TEXT ticker UK "NOT NULL"
+        TEXT name "NOT NULL"
+        TEXT notes "NOT NULL DEFAULT ''"
+        TEXT added_at "NOT NULL"
+    }
+
+    alert_rules {
+        INTEGER id PK
+        TEXT ticker "NOT NULL"
+        TEXT condition "NOT NULL CHECK above or below"
+        REAL threshold "NOT NULL CHECK > 0"
+        INTEGER is_active "NOT NULL DEFAULT 1"
+        TEXT created_at "NOT NULL"
+    }
+
+    alert_events {
+        INTEGER id PK
+        INTEGER rule_id FK "ON DELETE SET NULL"
+        TEXT ticker "NOT NULL"
+        TEXT condition "NOT NULL"
+        REAL threshold "NOT NULL"
+        REAL observed_price "NOT NULL"
+        TEXT triggered_at "NOT NULL"
+    }
+
+    alert_rules ||--o{ alert_events : "rule_id"
+    watchlist_items ||..o{ alert_rules : "ticker, no FK"

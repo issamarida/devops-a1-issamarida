@@ -1,0 +1,66 @@
+flowchart TB
+    browser([Browser])
+    finnhubApi([Finnhub quote API<br/>finnhub.io/api/v1/quote])
+
+    subgraph proc["One process: python app.py"]
+        appPy["app.py<br/>load_config, create_app,<br/>start_poller, waitress serve"]
+        createApp["create_app in app/__init__.py<br/>composition root<br/>also serves / and /health"]
+        poller["poller thread in app/poller.py<br/>daemon, every POLL_INTERVAL_SECONDS"]
+
+        subgraph watchlist["app/watchlist"]
+            wRoutes["watchlist routes<br/>/watchlist"]
+            wService["WatchlistService"]
+            wRepo["WatchlistRepository"]
+        end
+
+        subgraph alerts["app/alerts"]
+            aRoutes["alerts routes<br/>/alerts, /alerts/evaluate"]
+            aService["AlertService<br/>evaluate_all"]
+            rules["is_triggered<br/>rules.py"]
+            aRepo["AlertRepository<br/>fire_rule"]
+        end
+
+        subgraph ports["app/ports.py"]
+            wReader{{"WatchlistReader<br/>is_watched"}}
+            priceSource{{"PriceSource<br/>get_price, PriceUnavailable"}}
+        end
+
+        subgraph market["app/market"]
+            cached["CachedPriceSource"]
+            finnhub["FinnhubSource"]
+            demo["DemoPriceSource"]
+        end
+
+        db["app/db.py<br/>get_connection, init_db"]
+    end
+
+    sqlite[("SQLite<br/>$DATA_DIR/app.db")]
+
+    browser -- HTTP --> wRoutes
+    browser -- HTTP --> aRoutes
+    browser -- "/health" --> createApp
+
+    appPy --> createApp
+    appPy -- start_poller --> poller
+    poller -- evaluate_all --> aService
+
+    createApp -. wires .-> wService
+    createApp -. wires .-> aService
+    createApp -. "picks one: key set" .-> cached
+    createApp -. "picks one: no key" .-> demo
+    createApp -- init_db --> db
+
+    wRoutes --> wService --> wRepo --> db
+    aRoutes --> aService
+    aService --> rules
+    aService --> aRepo --> db
+    db --> sqlite
+
+    aService --> wReader
+    aService --> priceSource
+    wService -. "fits without importing" .-> wReader
+    cached -. implements .-> priceSource
+    finnhub -. implements .-> priceSource
+    demo -. implements .-> priceSource
+    cached -- wraps --> finnhub
+    finnhub -- "HTTPS, key in header" --> finnhubApi

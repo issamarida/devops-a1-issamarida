@@ -50,6 +50,10 @@ The model held up. The 29 Sep refactor is the iterative part working as intended
 
 The app is one Flask process served by waitress and started with `python app.py`. Inside it there are two domains and a set of price adapters.
 
+![Architecture diagram](diagrams/architecture.png)
+
+Solid arrows are calls. Dotted arrows show what create_app wires together and which classes fit which interface. The source is `docs/diagrams/architecture.mmd`.
+
 Each domain has the same layers:
 
 - **Routes** (`routes.py`) are Flask blueprints. They read the form, call the service and redirect with a flash message. No rules live here.
@@ -82,6 +86,10 @@ Alerts plus the market adapters would become their own service. The alert tables
 ## 4. Data model
 
 There are three tables in one SQLite file at `$DATA_DIR/app.db`. Each domain owns its own schema file and only its repository touches its tables.
+
+![Database schema diagram](diagrams/schema.png)
+
+The solid line is a real foreign key. The dotted line is the soft reference by ticker, which has no foreign key. The source is `docs/diagrams/schema.mmd`.
 
 - **watchlist_items** (watchlist domain): one row per tracked ticker. `ticker` is UNIQUE, so a duplicate is rejected by SQLite and the service turns that into a clear message.
 - **alert_rules** (alerts domain): one row per rule. `condition` is limited to 'above' or 'below' and `threshold` must be greater than 0 by CHECK constraints. `is_active` goes from 1 to 0 when the rule fires.
