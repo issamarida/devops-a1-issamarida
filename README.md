@@ -46,7 +46,7 @@ uv pip install -r requirements.txt
 python app.py
 ```
 
-Open http://localhost:8080. There's nothing to set up first. The app makes the data folder and tables when it starts. `GET /health` returns 200 once the tables exist.
+Open http://localhost:8080. There's nothing to set up first. The app makes the data folder and tables when it starts. `GET /health` returns 200 once it can read all three tables.
 
 ## Configuration
 
@@ -109,7 +109,7 @@ app/watchlist/service.py         33      0   100%
 -----------------------------------------------------------
 TOTAL                           312      0   100%
 Required test coverage of 70.0% reached. Total coverage: 100.00%
-============================= 110 passed in 0.32s ==============================
+============================= 119 passed in 0.72s ==============================
 ```
 
 ## Project layout
@@ -125,7 +125,7 @@ app/watchlist/            watchlist schema, repository, service, routes
 app/alerts/               alerts schema, rule check, repository, service, routes
 app/market/               demo prices, Finnhub adapter, price cache
 app/templates/            HTML templates
-tests/                    unit tests and the architecture test
+tests/                    unit, architecture, contract and end-to-end tests
 ```
 
 ## Notes for Assignment 2 deployment
@@ -134,6 +134,6 @@ tests/                    unit tests and the architecture test
 - The port comes from `PORT`.
 - `DATA_DIR` must point at a persistent volume. The container filesystem is lost on restart and the database would go with it.
 - Run exactly one replica. Each replica would run its own poller and they'd all check the same rules.
-- Use `GET /health` for the health probe. It returns 200 once the tables exist.
+- Use `GET /health` for the health probe. It returns 200 with `{"status": "ok"}` when it can read all three tables and 503 with `{"status": "error"}` when it can't. The cause goes to the log only.
 - Supply `PRICE_API_KEY` as a secret at runtime. Never bake it into the image.
 - Logs go to stdout.

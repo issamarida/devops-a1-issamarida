@@ -4,6 +4,8 @@ This is the only file allowed to import more than one domain.
 """
 
 import logging
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 from flask import Flask, redirect, url_for
@@ -65,13 +67,16 @@ def create_app(config: Config, *, price_source=None) -> Flask:
 
     @app.get("/health")
     def health():
-        conn = get_connection(config.db_path)
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'watchlist_items'"
-        ).fetchone()
-        conn.close()
-        if row is None:
-            return {"status": "database not ready"}, 503
+        # Reads each table once. Fails if the file or a table is missing.
+        try:
+            with closing(get_connection(config.db_path)) as conn:
+                conn.execute("SELECT 1 FROM watchlist_items LIMIT 1").fetchone()
+                conn.execute("SELECT 1 FROM alert_rules LIMIT 1").fetchone()
+                conn.execute("SELECT 1 FROM alert_events LIMIT 1").fetchone()
+        except sqlite3.Error:
+            # The details go to the log only, never into the response.
+            logger.exception("Health check failed")
+            return {"status": "error"}, 503
         return {"status": "ok"}, 200
 
     return app

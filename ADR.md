@@ -41,3 +41,17 @@ Decision: The schema has three tables: watchlist_items for the watchlist, and al
 Alternatives considered: Storing the last fire time and price on the alert_rules row. Rejected because it only keeps one firing and loses it when the rule is deleted. A foreign key from alert_rules.ticker to watchlist_items was already rejected in ADR-2.
 
 Consequences: History survives rule deletion and can be listed without a join. Some values are duplicated between alert_rules and alert_events.
+
+## 4. Testing approach
+
+Date: 2026-10-01
+
+Status: Decided
+
+Context: The brief asks for 70% coverage on core logic, not on routing, and I only have a week. The riskiest code is how a rule fires and what happens when a price is missing.
+
+Decision: Coverage measures the app package but leaves out the Flask routes and create_app, and most tests target is_triggered, AlertService.evaluate_all, fire_rule and WatchlistService validation using fake PriceSource and WatchlistReader classes. Coverage is 100% with the command in the README.
+
+Alternatives considered: Measuring every file including the routes. Rejected because route handlers are thin glue, so the number would reward tests that check nothing important.
+
+Consequences: Route bugs are only caught by one end-to-end test and the contract test, not by unit tests. The fakes keep tests fast and offline, but they would not notice if Finnhub changed its response format.
