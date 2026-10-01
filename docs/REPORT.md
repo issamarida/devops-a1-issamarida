@@ -38,7 +38,7 @@ On 28 Sep I built the scaffold, config, db helpers and the whole watchlist domai
 
 On 29 Sep I stopped adding features and refactored. The first version lived in a package with a product name and had code I couldn't explain cleanly. I renamed the package to app/, made the code plainer and fixed the tests and docs to match. It was one large commit touching 25 files. It cost me a day on the plan, but I'm glad I did it before alerts existed rather than after.
 
-30 Sep was the biggest day. Starting just after midnight and through the day I built the alerts schema and rule logic, the fire-and-log transaction, AlertService behind the ports, the demo and Finnhub price sources, the cache, the poller and config validation. That is 8 of the 20 commits so far, which is right at the 40% limit for one day. ADR-2 and ADR-3 were written that day as I made those decisions.
+30 Sep was the biggest day. Starting just after midnight and through the day I built the alerts schema and rule logic, the fire-and-log transaction, AlertService behind the ports, the demo and Finnhub price sources, the cache, the poller and config validation. That is 10 commits in one day, which is more than 40% of the history until later days catch up. It is the clearest sign of the late start. ADR-2 and ADR-3 were written that day as I made those decisions.
 
 On 1 Oct I added the architecture test, scoped coverage to core logic, wrote the contract and end-to-end tests and recorded ADR-4. One commit that day has the message "update". That message doesn't describe anything, and it doesn't count as a meaningful commit under section 5. It updated the README and AI_USAGE.md.
 
