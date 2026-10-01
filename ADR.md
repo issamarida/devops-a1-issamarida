@@ -16,7 +16,7 @@ Consequences: There's less framework to explain at the check. I write the SQL an
 
 ## 2. Keeping the watchlist and alerts domains separate
 
-Date: 2026-09-30
+Date: 2026-09-29
 
 Status: Decided
 
