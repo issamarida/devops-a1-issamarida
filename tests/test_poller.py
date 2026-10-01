@@ -76,3 +76,14 @@ def test_thread_keeps_running_after_a_failed_check():
     stop_event.set()
     thread.join(timeout=1)
     assert not thread.is_alive()
+
+
+def test_start_poller_makes_its_own_stop_event_when_none_is_given():
+    service = FakeAlertService()
+
+    # A long interval so the daemon thread runs once and then waits.
+    thread = start_poller(service, 3600)
+
+    assert thread.is_alive()
+    assert thread.daemon is True
+    assert service.called.wait(timeout=1)

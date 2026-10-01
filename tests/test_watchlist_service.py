@@ -60,3 +60,15 @@ def test_remove_item(watchlist_service):
 
 def test_remove_item_that_is_not_watched_returns_false(watchlist_service):
     assert watchlist_service.remove_item("NOPE") is False
+
+
+def test_add_item_accepts_ticker_of_exactly_ten_characters(watchlist_service):
+    assert watchlist_service.add_item("ABCDEFGHIJ", "Ten Letters").ticker == "ABCDEFGHIJ"
+
+
+def test_notes_default_to_empty(watchlist_service):
+    assert watchlist_service.add_item("AAPL", "Apple").notes == ""
+
+
+def test_list_items_starts_empty(watchlist_service):
+    assert watchlist_service.list_items() == []

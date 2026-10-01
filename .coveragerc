@@ -1,0 +1,10 @@
+[run]
+source = app
+# Framework glue and the composition root are left out, per brief section 4.
+omit =
+    app/*/routes.py
+    app/__init__.py
+
+[report]
+fail_under = 70
+show_missing = true
