@@ -55,3 +55,17 @@ Decision: Coverage measures the app package but leaves out the Flask routes and 
 Alternatives considered: Measuring every file including the routes. Rejected because route handlers are thin glue, so the number would reward tests that check nothing important.
 
 Consequences: Route bugs are only caught by one end-to-end test and the contract test, not by unit tests. The fakes keep tests fast and offline, but they would not notice if Finnhub changed its response format.
+
+## 5. No user accounts or login
+
+Date: 2026-10-01
+
+Status: Decided
+
+Context: The brief makes authentication a choice I have to justify. The app is built for one person tracking their own tickers.
+
+Decision: No login and no users table. There is one shared watchlist and one set of alert rules.
+
+Alternatives considered: Flask-Login with a users table and a user_id on every row. Rejected because it adds a dependency and a password store to secure and explain, with no benefit for a single user.
+
+Consequences: Anyone who can reach the app can change its data, so Assignment 2 has to restrict network access or add auth before exposing it. Adding users later means a user_id column on all three tables.

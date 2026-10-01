@@ -134,3 +134,5 @@ The last run on 1 Oct gave 119 passed tests and 100% coverage on 312 statements.
 Two things matter for the deployment itself and are in the README. `DATA_DIR` must sit on a persistent volume or the database is lost on restart. The app must run as exactly one replica, because each replica would start its own poller against the same rules. `PRICE_API_KEY` is supplied as a runtime secret and never baked into the image.
 
 ## 7. AI disclosure
+
+I acknowledge the use of Claude (claude.ai) and Claude Code to plan the architecture and to generate most of the code, tests and documentation in this repository. The prompts used include one session prompt per build step, each summarised in AI_USAGE.md, for example: build the alerts domain with an atomic fire-and-log transaction behind the ports. The output of these prompts was used to build the watchlist and alerts domains, the price adapters, the poller, the test suite and the first draft of this report, which I reviewed, tested before every push and explain in my own words in AI_USAGE.md.
