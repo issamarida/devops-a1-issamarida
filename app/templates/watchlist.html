@@ -3,33 +3,40 @@
 {% block content %}
 <h1>Watchlist</h1>
 
-<form method="post" action="{{ url_for('watchlist.add_item') }}">
-  <label>Ticker <input name="ticker" maxlength="10" required></label>
-  <label>Name <input name="name" required></label>
-  <label>Notes <input name="notes"></label>
-  <p><button type="submit">Add</button></p>
+<form class="add card" method="post" action="{{ url_for('watchlist.add_item') }}">
+  <label>Ticker <input name="ticker" maxlength="10" placeholder="AAPL" autocomplete="off" required></label>
+  <label>Name <input name="name" placeholder="Apple" required></label>
+  <label>Notes <input name="notes" placeholder="Optional"></label>
+  <button type="submit">Add asset</button>
 </form>
 
-{% if items %}
-<table>
-  <thead><tr><th>Ticker</th><th>Name</th><th>Notes</th><th>Added</th><th></th></tr></thead>
-  <tbody>
-  {% for item in items %}
-    <tr>
-      <td>{{ item.ticker }}</td>
-      <td>{{ item.name }}</td>
-      <td>{{ item.notes }}</td>
-      <td>{{ item.added_at }}</td>
-      <td>
-        <form class="inline" method="post" action="{{ url_for('watchlist.delete_item', ticker=item.ticker) }}">
-          <button type="submit">Remove</button>
-        </form>
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p>No assets on the watchlist yet.</p>
-{% endif %}
+<section>
+  <div class="section-head"><h2>Tracked assets</h2></div>
+  <div class="card">
+    {% if items %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ticker</th><th>Name</th><th>Notes</th><th>Added (UTC)</th><th></th></tr></thead>
+        <tbody>
+        {% for item in items %}
+          <tr>
+            <td>{{ item.ticker }}</td>
+            <td>{{ item.name }}</td>
+            <td class="wrap quiet">{{ item.notes }}</td>
+            <td class="quiet">{{ item.added_at[:16]|replace("T", " ") }}</td>
+            <td class="end">
+              <form class="inline" method="post" action="{{ url_for('watchlist.delete_item', ticker=item.ticker) }}">
+                <button class="link" type="submit">Remove</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">No assets on the watchlist yet.</p>
+    {% endif %}
+  </div>
+</section>
 {% endblock %}

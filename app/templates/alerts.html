@@ -4,68 +4,81 @@
 <h1>Alerts</h1>
 
 {% if using_demo_prices %}
-<div class="banner">Demo prices: PRICE_API_KEY is not set</div>
+<div class="message notice">Demo prices: PRICE_API_KEY is not set</div>
 {% endif %}
 
-<form method="post" action="{{ url_for('alerts.add_rule') }}">
-  <label>Ticker <input name="ticker" maxlength="10" required></label>
+<form class="add card" method="post" action="{{ url_for('alerts.add_rule') }}">
+  <label>Ticker <input name="ticker" maxlength="10" placeholder="AAPL" autocomplete="off" required></label>
   <label>Condition
     <select name="condition">
       {% for condition in conditions %}
-      <option value="{{ condition }}">{{ condition }}</option>
+      <option value="{{ condition }}">Price {{ condition }}</option>
       {% endfor %}
     </select>
   </label>
-  <label>Threshold <input name="threshold" type="number" step="any" min="0" required></label>
-  <p><button type="submit">Add rule</button></p>
+  <label>Threshold <input name="threshold" type="number" step="any" min="0" placeholder="150" required></label>
+  <button type="submit">Add rule</button>
 </form>
 
-<h2>Rules</h2>
-<form method="post" action="{{ url_for('alerts.evaluate') }}">
-  <button type="submit">Check rules now</button>
-</form>
+<section>
+  <div class="section-head">
+    <h2>Rules</h2>
+    <form class="inline" method="post" action="{{ url_for('alerts.evaluate') }}">
+      <button class="secondary" type="submit">Check rules now</button>
+    </form>
+  </div>
+  <div class="card">
+    {% if rules %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ticker</th><th>Condition</th><th>Threshold</th><th>Status</th><th>Created (UTC)</th><th></th></tr></thead>
+        <tbody>
+        {% for rule in rules %}
+          <tr {% if not rule.is_active %}class="fired"{% endif %}>
+            <td>{{ rule.ticker }}</td>
+            <td>{{ rule.condition }}</td>
+            <td>{{ rule.threshold }}</td>
+            <td>{% if rule.is_active %}active{% else %}fired{% endif %}</td>
+            <td class="quiet">{{ rule.created_at[:16]|replace("T", " ") }}</td>
+            <td class="end">
+              <form class="inline" method="post" action="{{ url_for('alerts.delete_rule', rule_id=rule.id) }}">
+                <button class="link" type="submit">Delete</button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">No alert rules yet.</p>
+    {% endif %}
+  </div>
+</section>
 
-{% if rules %}
-<table>
-  <thead><tr><th>Ticker</th><th>Condition</th><th>Threshold</th><th>Status</th><th>Created</th><th></th></tr></thead>
-  <tbody>
-  {% for rule in rules %}
-    <tr>
-      <td>{{ rule.ticker }}</td>
-      <td>{{ rule.condition }}</td>
-      <td>{{ rule.threshold }}</td>
-      <td>{% if rule.is_active %}active{% else %}fired{% endif %}</td>
-      <td>{{ rule.created_at }}</td>
-      <td>
-        <form class="inline" method="post" action="{{ url_for('alerts.delete_rule', rule_id=rule.id) }}">
-          <button type="submit">Delete</button>
-        </form>
-      </td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p>No alert rules yet.</p>
-{% endif %}
-
-<h2>Trigger history</h2>
-{% if events %}
-<table>
-  <thead><tr><th>Ticker</th><th>Condition</th><th>Threshold</th><th>Price seen</th><th>Triggered</th></tr></thead>
-  <tbody>
-  {% for event in events %}
-    <tr>
-      <td>{{ event.ticker }}</td>
-      <td>{{ event.condition }}</td>
-      <td>{{ event.threshold }}</td>
-      <td>{{ event.observed_price }}</td>
-      <td>{{ event.triggered_at }}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}
-<p>No rule has fired yet.</p>
-{% endif %}
+<section>
+  <div class="section-head"><h2>Trigger history</h2></div>
+  <div class="card">
+    {% if events %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ticker</th><th>Condition</th><th>Threshold</th><th>Price seen</th><th>Triggered (UTC)</th></tr></thead>
+        <tbody>
+        {% for event in events %}
+          <tr>
+            <td>{{ event.ticker }}</td>
+            <td>{{ event.condition }}</td>
+            <td>{{ event.threshold }}</td>
+            <td>{{ event.observed_price }}</td>
+            <td class="quiet">{{ event.triggered_at[:16]|replace("T", " ") }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty">No rule has fired yet.</p>
+    {% endif %}
+  </div>
+</section>
 {% endblock %}
