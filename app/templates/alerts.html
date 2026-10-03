@@ -2,7 +2,7 @@
 {% block title %}Price alerts{% endblock %}
 {% block content %}
 <div class="heading"><div><div class="eyebrow">Stay aware, without the noise</div><h1>Price alerts</h1><p>Set your price conditions. Each rule fires once and leaves a record you can revisit.</p></div><form class="inline" method="post" action="{{ url_for('alerts.evaluate') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary" type="submit">↻ Check rules now</button></form></div>
-{% if using_demo_prices %}<div class="message notice"><strong>Demo prices are on.</strong> Quotes are simulated, not real market prices. Use this mode to try the alert workflow.</div>{% endif %}
+{% if not prices_configured %}<div class="message notice"><strong>Price checks are unavailable.</strong> Ask the app owner to configure Finnhub. You can still manage your watchlist and rules; no prices will be invented.</div>{% endif %}
 <div class="stats" aria-label="Alert summary">
   <div class="stat"><div class="stat-label">Active</div><span class="stat-value">{{ active_count }}</span><small>Watching a price condition</small></div>
   <div class="stat"><div class="stat-label">Dormant</div><span class="stat-value">{{ dormant_count }}</span><small>Ticker removed from watchlist</small></div>

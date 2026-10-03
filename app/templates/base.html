@@ -114,14 +114,14 @@
     <a class="nav-link {{ 'current' if request.blueprint == 'alerts' }}" href="{{ url_for('alerts.list_rules') }}" {% if request.blueprint == 'alerts' %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">◎</span> Price alerts</a>
   </nav>
   <div class="sidebar-bottom">
-    <div class="mode-card"><strong>{{ 'Demo workspace' if using_demo_prices else 'Finnhub prices' }}</strong>{{ 'Prices are simulated. Explore the workflow without real market data.' if using_demo_prices else 'Quotes may be delayed or unavailable. Alerts are checked periodically.' }}</div>
+    <div class="mode-card"><strong>{{ 'Finnhub prices' if prices_configured else 'Price feed unavailable' }}</strong>{{ 'Quotes may be delayed or unavailable. Alerts are checked periodically.' if prices_configured else 'Price checks are paused until the app owner configures Finnhub.' }}</div>
     <div class="account"><span class="avatar" aria-hidden="true">{{ g.user.username[0]|upper }}</span><span class="account-name">{{ g.user.username }}<br>Private account</span><form class="inline" method="post" action="{{ url_for('sign_out') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="link" type="submit">Sign out</button></form></div>
   </div>
 </aside>
 {% endif %}
 <main id="content" {% if not g.user %}class="auth-main"{% endif %}>
   <div class="{{ 'workspace' if g.user else '' }}">
-  {% if g.user %}<div class="topline"><span>Workspace / {% if request.blueprint == 'alerts' %}Price alerts{% else %}Watchlist{% endif %}</span><span class="badge">{{ 'Demo prices' if using_demo_prices else 'Finnhub quotes' }}</span></div>{% endif %}
+  {% if g.user %}<div class="topline"><span>Workspace / {% if request.blueprint == 'alerts' %}Price alerts{% else %}Watchlist{% endif %}</span><span class="badge">{{ 'Finnhub configured' if prices_configured else 'Finnhub not configured' }}</span></div>{% endif %}
   {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="message {{ category }}" role="status">{{ message }}</div>{% endfor %}{% endwith %}
   {% block content %}{% endblock %}
   {% if g.user %}<footer class="footer"><span>Private to your account · All times UTC</span><span>Monitoring only. No trades or investment advice.</span></footer>{% endif %}

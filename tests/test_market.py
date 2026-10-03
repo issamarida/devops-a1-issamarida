@@ -4,7 +4,6 @@ import pytest
 import requests
 
 from app.market.cache import CachedPriceSource
-from app.market.demo import DemoPriceSource
 from app.market.finnhub import QUOTE_URL, FinnhubSource
 from app.ports import PriceUnavailable
 
@@ -27,43 +26,6 @@ def fake_response(status_code=200, payload=None, json_error=None):
     else:
         response.json.return_value = payload
     return response
-
-
-# Demo prices
-
-
-def test_demo_same_price_inside_one_window():
-    clock = FakeClock(60)
-    source = DemoPriceSource(clock=clock)
-    first = source.get_price("AAPL")
-    clock.now = 89
-    assert source.get_price("AAPL") == first
-
-
-def test_demo_ignores_ticker_case():
-    source = DemoPriceSource(clock=FakeClock(60))
-    assert source.get_price("aapl") == source.get_price("AAPL")
-
-
-def test_demo_price_changes_in_a_later_window():
-    clock = FakeClock(0)
-    source = DemoPriceSource(clock=clock)
-    prices = set()
-    for window in range(10):
-        clock.now = window * 30
-        prices.add(source.get_price("AAPL"))
-    assert len(prices) > 1
-
-
-def test_demo_price_is_always_positive_and_in_range():
-    clock = FakeClock(0)
-    source = DemoPriceSource(clock=clock)
-    for ticker in ["AAPL", "MSFT", "BRK.B", "X", "TSLA"]:
-        for window in range(50):
-            clock.now = window * 30
-            price = source.get_price(ticker)
-            assert 9.5 <= price <= 525
-            assert price == round(price, 2)
 
 
 # Finnhub
@@ -240,3 +202,13 @@ def test_live_quotes_obey_global_budget_and_recover_after_window():
         clock.now = 60
         assert source.get_price("TSLA") == 100
         assert get.call_count == 3
+
+
+@pytest.mark.parametrize("key", [None, "", "   "])
+def test_missing_key_never_requests_or_invents_a_price(key):
+    source = FinnhubSource(key)
+    with patch("app.market.finnhub.requests.get") as get:
+        with pytest.raises(PriceUnavailable, match="not configured"):
+            source.get_price("AAPL")
+    get.assert_not_called()
+    assert not source.calls

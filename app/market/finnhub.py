@@ -18,12 +18,12 @@ QUOTE_URL = "https://finnhub.io/api/v1/quote"
 class FinnhubSource:
     def __init__(
         self,
-        api_key: str,
+        api_key: str | None,
         timeout: float = 5.0,
         requests_per_minute=30,
         clock=time.monotonic,
     ):
-        self.api_key = api_key
+        self.api_key = api_key.strip() if api_key else None
         self.timeout = timeout
         self.requests_per_minute = requests_per_minute
         self.clock = clock
@@ -31,6 +31,8 @@ class FinnhubSource:
         self.lock = threading.Lock()
 
     def get_price(self, ticker: str) -> float:
+        if not self.api_key:
+            raise PriceUnavailable("Finnhub is not configured")
         with self.lock:
             now = self.clock()
             while self.calls and now - self.calls[0] >= 60:

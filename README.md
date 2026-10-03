@@ -19,7 +19,7 @@ For bash/zsh use `source .venv/bin/activate` instead. Plain pip also works: `pyt
 
 Open http://localhost:8080. Create an account in the browser, then sign in. There are no default credentials and no interactive server setup. Tables and compatible schema upgrades run automatically at startup. `GET /health` is public and returns 200 only when all five tables can be read.
 
-Without an API key, clearly labelled demo prices let the entire workflow run offline. To try it, add AAPL to your watchlist, create an **above 1.00** rule, and select **Check rules now**. Its demo price is above 1, so it fires once. Repeat the check to confirm there is no second event. This is simulated data, not a trading signal.
+All prices come from Finnhub. Set `PRICE_API_KEY` to a Finnhub key before you start the app. Without a key you can still manage your watchlist and rules, but price checks are paused and no prices are invented. To try it, add AAPL to your watchlist, create an **above 1.00** rule, and select **Check rules now**. The live AAPL quote is above 1, so it fires once. Repeat the check to confirm there is no second event.
 
 ## Audience and boundaries
 
@@ -38,7 +38,7 @@ All settings come from optional environment variables. No `.env` file or source 
 | `HOST` | `0.0.0.0` | Bind address |
 | `PORT` | `8080` | Integer from 1 to 65535 |
 | `DATA_DIR` | `./data` | SQLite path is `$DATA_DIR/app.db` |
-| `PRICE_API_KEY` | unset | Optional Finnhub key; unset/empty uses simulated prices |
+| `PRICE_API_KEY` | unset | Finnhub key; unset or empty pauses price checks |
 | `POLL_INTERVAL_SECONDS` | `60` | Wait between checks; 0 disables automatic checks |
 | `PRICE_CACHE_TTL_SECONDS` | `30` | Cache live quotes; 0 disables reuse |
 | `QUOTE_REQUESTS_PER_MINUTE` | `30` | Shared rolling limit on outbound quote requests |

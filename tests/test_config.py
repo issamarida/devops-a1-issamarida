@@ -139,3 +139,8 @@ def test_rejects_short_session_secret(monkeypatch):
     monkeypatch.setenv("SECRET_KEY", "short")
     with pytest.raises(ValueError, match="SECRET_KEY"):
         load_config()
+
+
+def test_whitespace_api_key_is_unconfigured(monkeypatch):
+    monkeypatch.setenv("PRICE_API_KEY", "   ")
+    assert load_config().price_api_key is None

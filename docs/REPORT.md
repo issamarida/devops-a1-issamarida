@@ -36,11 +36,11 @@ The only start command is `python app.py`. It loads environment configuration, c
 
 Each domain has routes, a service and a repository. Routes handle forms; services validate and apply business rules; repositories execute parameterised SQL using one short-lived connection per call. The composition root builds both repositories with the authenticated owner ID, so a request cannot choose another owner's data. Authentication code does not import either business domain.
 
-Alerts calls the neutral WatchlistReader and PriceSource protocols in app/ports.py. It never imports watchlist or market. A scoped WatchlistService satisfies WatchlistReader structurally. The shared price source uses either deterministic demo prices or a cached Finnhub adapter. The API key is read from the environment and sent in a header, never logged. Invalid quotes become PriceUnavailable.
+Alerts calls the neutral WatchlistReader and PriceSource protocols in app/ports.py. It never imports watchlist or market. A scoped WatchlistService satisfies WatchlistReader structurally. The shared price source is a cached Finnhub adapter. Finnhub is the only runtime price source; without a key, price checks are paused rather than simulated. The API key is read from the environment and sent in a header, never logged. Invalid quotes become PriceUnavailable.
 
 To split alerts in Assignment 2, its tables and poller could move together, and WatchlistReader could become an authenticated HTTP client carrying the same owner identity. That would require an identity propagation contract, an endpoint and network-failure handling. The current logical seam reduces coupling; it does not make those distributed-system concerns disappear.
 
-Jinja templates and local CSS provide a responsive interface without a frontend build system or external assets. Summary counts are real database values. Empty states guide the next action, demo prices are labelled, and dormant rules are visibly different from active and fired rules.
+Jinja templates and local CSS provide a responsive interface without a frontend build system or external assets. Summary counts are real database values. Empty states guide the next action, a missing Finnhub key is labelled, and dormant rules are visibly different from active and fired rules.
 
 <!-- pagebreak -->
 
@@ -84,7 +84,7 @@ Known limits remain: real Finnhub compatibility is not tested against the networ
 
 ## 5. Deployment contract, evidence and disclosure
 
-The application meets the Assignment 1 runtime shape: one process started by python app.py, HOST defaulting to 0.0.0.0, PORT defaulting to 8080, no interactive server setup, one configurable SQLite path, and no required external service in demo mode. requirements.txt is the sole manifest, with six direct dependencies. There is no Dockerfile, Compose configuration, authored CI workflow, IaC or public deployment.
+The application meets the Assignment 1 runtime shape: one process started by python app.py, HOST defaulting to 0.0.0.0, PORT defaulting to 8080, no interactive server setup, one configurable SQLite path, and no required external service at startup; price checks need a Finnhub key. requirements.txt is the sole manifest, with six direct dependencies. There is no Dockerfile, Compose configuration, authored CI workflow, IaC or public deployment.
 
 Configuration uses optional environment variables, including polling, caching, authentication limits and storage capacities. The app does not require a .env file. The public /health endpoint reads the three business tables and two access-control tables, returning a generic 503 if a read fails. Logs go to stdout. Readiness is tested from a previously nonexistent data directory.
 

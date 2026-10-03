@@ -4,6 +4,7 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from dataclasses import replace
+from unittest.mock import Mock
 
 import pytest
 
@@ -40,7 +41,9 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.delenv("PRICE_API_KEY", raising=False)
     monkeypatch.delenv("SECRET_KEY", raising=False)
-    return create_app(load_config())
+    return create_app(
+        load_config(), price_source=Mock(get_price=Mock(return_value=100.0))
+    )
 
 
 def test_all_private_pages_require_login_but_health_is_public(app):

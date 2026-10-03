@@ -6,11 +6,11 @@ flowchart TB
         watch["WATCHLIST<br/>Routes / Service<br/>Repository"]
         alert["ALERTS<br/>Routes / Service<br/>Repository"]
         reader["WatchlistReader<br/>Same owner"]
-        price["PriceSource<br/>Demo or cached Finnhub"]
+        price["PriceSource<br/>Cached Finnhub"]
         poller["Daemon poller<br/>Started only by app.py"]
     end
     db[("SQLite<br/>DATA_DIR/app.db")]
-    api["Optional Finnhub API"]
+    api["Finnhub API"]
     browser --> access
     root -. wires .-> access
     root -. scopes .-> watch

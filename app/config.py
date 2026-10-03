@@ -79,8 +79,8 @@ def load_config() -> Config:
         host=os.environ.get("HOST", "0.0.0.0"),
         port=port,
         data_dir=Path(os.environ.get("DATA_DIR", "./data")),
-        # An empty PRICE_API_KEY counts as not set.
-        price_api_key=os.environ.get("PRICE_API_KEY") or None,
+        # An empty or whitespace-only key counts as not configured.
+        price_api_key=os.environ.get("PRICE_API_KEY", "").strip() or None,
         poll_interval_seconds=poll_interval_seconds,
         price_cache_ttl_seconds=price_cache_ttl_seconds,
         secret_key=secret_key,

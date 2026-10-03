@@ -16,7 +16,6 @@ from app.alerts.service import AlertService
 from app.config import Config
 from app.db import get_connection, init_db
 from app.market.cache import CachedPriceSource
-from app.market.demo import DemoPriceSource
 from app.market.finnhub import FinnhubSource
 from app.security import install_access
 from app.watchlist import SCHEMA_PATH as WATCHLIST_SCHEMA
@@ -41,22 +40,24 @@ def create_app(config: Config, *, price_source=None) -> Flask:
 
     access = install_access(app, config)
 
-    # Tests pass a fake price_source. The real app picks one from the config.
-    app.config["USING_DEMO_PRICES"] = False
+    # Tests inject an offline fake. Finnhub is the only runtime price source.
+    app.config["PRICE_SOURCE_CONFIGURED"] = price_source is not None or bool(
+        config.price_api_key
+    )
     if price_source is None:
+        price_source = CachedPriceSource(
+            FinnhubSource(
+                config.price_api_key,
+                requests_per_minute=config.quote_requests_per_minute,
+            ),
+            config.price_cache_ttl_seconds,
+        )
         if config.price_api_key:
-            price_source = CachedPriceSource(
-                FinnhubSource(
-                    config.price_api_key,
-                    requests_per_minute=config.quote_requests_per_minute,
-                ),
-                config.price_cache_ttl_seconds,
-            )
             logger.info("Price source: Finnhub")
         else:
-            price_source = DemoPriceSource()
-            app.config["USING_DEMO_PRICES"] = True
-            logger.info("Price source: demo prices, PRICE_API_KEY is not set")
+            logger.warning(
+                "Finnhub is not configured; set PRICE_API_KEY to enable price checks"
+            )
 
     def watchlist_for(owner_id):
         return WatchlistService(
@@ -102,7 +103,7 @@ def create_app(config: Config, *, price_source=None) -> Flask:
             "active_count": sum(rule["status"] == "active" for rule in rules),
             "dormant_count": sum(rule["status"] == "dormant" for rule in rules),
             "event_count": alerts.count_events(),
-            "using_demo_prices": app.config["USING_DEMO_PRICES"],
+            "prices_configured": app.config["PRICE_SOURCE_CONFIGURED"],
             "poll_interval": config.poll_interval_seconds,
         }
 

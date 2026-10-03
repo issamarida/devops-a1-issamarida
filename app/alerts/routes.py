@@ -23,7 +23,6 @@ def create_alerts_blueprint(get_service) -> Blueprint:
             rules=get_service().list_rules(),
             events=get_service().list_events(),
             conditions=CONDITIONS,
-            using_demo_prices=current_app.config["USING_DEMO_PRICES"],
         )
 
     @bp.post("/alerts")
@@ -49,6 +48,12 @@ def create_alerts_blueprint(get_service) -> Blueprint:
 
     @bp.post("/alerts/evaluate")
     def evaluate():
+        if not current_app.config["PRICE_SOURCE_CONFIGURED"]:
+            flash(
+                "Price checks are unavailable. Ask the app owner to configure Finnhub.",
+                "notice",
+            )
+            return redirect(url_for("alerts.list_rules"))
         service = get_service()
         fired = service.evaluate_all()
         flash(f"Checked the rules. {len(fired)} fired.", "success")

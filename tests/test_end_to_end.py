@@ -121,3 +121,68 @@ def test_manual_check_reports_unavailable_prices(client, prices):
     text = page(post_form(client, "/alerts/evaluate", follow_redirects=True))
     assert "Some prices were unavailable." in text
     assert "No rule has fired yet." in text
+
+
+def finnhub_client(tmp_path, monkeypatch, key):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PRICE_API_KEY", key)
+    app = create_app(load_config())
+    client = app.test_client()
+    post_form(
+        client,
+        "/register",
+        data={"username": "investor", "password": "a long test passphrase"},
+    )
+    post_form(
+        client,
+        "/login",
+        data={"username": "investor", "password": "a long test passphrase"},
+    )
+    return app, client
+
+
+def test_missing_key_keeps_app_ready_but_cannot_fire_rules(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    with patch("app.market.finnhub.requests.get") as get:
+        app, client = finnhub_client(tmp_path, monkeypatch, "")
+        assert client.get("/health").status_code == 200
+        add_aapl_with_rule(client)
+        text = page(post_form(client, "/alerts/evaluate", follow_redirects=True))
+        assert "Finnhub not configured" in text
+        assert "Price checks are unavailable." in text
+        assert "Demo prices" not in text
+        assert app.extensions["alert_service"].evaluate_all() == []
+        assert app.extensions["alerts_for"](1).list_events() == []
+        assert app.extensions["alerts_for"](1).list_rules()[0]["is_active"] == 1
+        get.assert_not_called()
+
+
+def test_configured_finnhub_quote_is_the_recorded_price(tmp_path, monkeypatch):
+    from unittest.mock import Mock, patch
+
+    with patch(
+        "app.market.finnhub.requests.get",
+        return_value=Mock(status_code=200, json=lambda: {"c": 187.44}),
+    ) as get:
+        app, client = finnhub_client(tmp_path, monkeypatch, "fake-key-for-tests")
+        add_aapl_with_rule(client)
+        text = page(post_form(client, "/alerts/evaluate", follow_redirects=True))
+        assert "Finnhub configured" in text
+        assert "Demo prices" not in text
+        assert (
+            app.extensions["alerts_for"](1).list_events()[0]["observed_price"] == 187.44
+        )
+        get.assert_called_once()
+
+
+def test_rejected_finnhub_key_does_not_fall_back_to_fake_prices(tmp_path, monkeypatch):
+    from unittest.mock import Mock, patch
+
+    with patch("app.market.finnhub.requests.get", return_value=Mock(status_code=401)):
+        app, client = finnhub_client(tmp_path, monkeypatch, "fake-key-for-tests")
+        add_aapl_with_rule(client)
+        text = page(post_form(client, "/alerts/evaluate", follow_redirects=True))
+        assert "Some prices were unavailable." in text
+        assert app.extensions["alerts_for"](1).list_events() == []
+        assert app.extensions["alerts_for"](1).list_rules()[0]["is_active"] == 1
