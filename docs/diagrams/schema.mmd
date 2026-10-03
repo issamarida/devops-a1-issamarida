@@ -1,30 +1,44 @@
 erDiagram
+    direction TB
     watchlist_items {
-        INTEGER id PK "AUTOINCREMENT"
-        TEXT ticker UK "NOT NULL"
-        TEXT name "NOT NULL"
-        TEXT notes "NOT NULL DEFAULT ''"
-        TEXT added_at "NOT NULL"
+        INTEGER id PK
+        INTEGER owner_id
+        TEXT ticker
+        TEXT name
+        TEXT notes
+        TEXT added_at
     }
-
     alert_rules {
         INTEGER id PK
-        TEXT ticker "NOT NULL"
-        TEXT condition "NOT NULL CHECK above or below"
-        REAL threshold "NOT NULL CHECK > 0"
-        INTEGER is_active "NOT NULL DEFAULT 1"
-        TEXT created_at "NOT NULL"
+        INTEGER owner_id
+        TEXT rule_token
+        TEXT ticker
+        TEXT condition
+        REAL threshold
+        INTEGER is_active
+        TEXT created_at
     }
-
     alert_events {
         INTEGER id PK
-        INTEGER rule_id FK "ON DELETE SET NULL"
-        TEXT ticker "NOT NULL"
-        TEXT condition "NOT NULL"
-        REAL threshold "NOT NULL"
-        REAL observed_price "NOT NULL"
-        TEXT triggered_at "NOT NULL"
+        INTEGER owner_id
+        INTEGER rule_id FK
+        TEXT ticker
+        TEXT condition
+        REAL threshold
+        REAL observed_price
+        TEXT triggered_at
     }
-
-    alert_rules ||--o{ alert_events : "rule_id"
-    watchlist_items ||..o{ alert_rules : "ticker, no FK"
+    accounts {
+        INTEGER id PK
+        TEXT username UK
+        TEXT password_hash
+        TEXT session_hash
+        REAL expires_at
+    }
+    rate_limits {
+        TEXT key PK
+        INTEGER attempts
+        REAL reset_at
+    }
+    watchlist_items o|..o{ alert_rules : "owner + ticker (no FK)"
+    alert_rules o|--o{ alert_events : "nullable rule_id"

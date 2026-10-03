@@ -14,6 +14,8 @@ Alternatives considered: FastAPI was rejected because nothing here needs async. 
 
 Consequences: There's less framework to explain at the check. I write the SQL and form handling by hand so the tests have to catch more mistakes.
 
+Revision recorded on 2026-10-03: I kept Jinja and local CSS because the two form-based pages do not justify a JavaScript build system. I use one daemon thread for periodic checks because it fits the single-process contract; it starts only in app.py. The thread waits after each run, so slow API calls extend the checking interval.
+
 ## 2. Keeping the watchlist and alerts domains separate
 
 Date: 2026-09-29
@@ -27,6 +29,8 @@ Decision: Alerts only talks to two small interfaces in app/ports.py, WatchlistRe
 Alternatives considered: Importing WatchlistService straight into alerts, or a foreign key from alert_rules to watchlist_items. Both were rejected because splitting alerts into its own service would then mean rewriting it.
 
 Consequences: Alerts can move to its own service by swapping WatchlistReader for an HTTP client. The cost is no joins across domains, and rules for a removed ticker stay in the table as dormant rows.
+
+Revision recorded on 2026-10-03: Each request now gets repositories scoped to the signed-in account. The WatchlistReader port stays unchanged because the supplied watchlist service already has the same owner scope. Access control is supporting infrastructure outside both business domains. Historical date clarification: ADR-2 entered Git on 2026-09-30 with that date; commit ab1ef81 later changed its displayed date to 2026-09-29. That discrepancy is retained here explicitly rather than presented as evidence of an earlier commit.
 
 ## 3. Trigger history as its own snapshot table
 
@@ -42,6 +46,8 @@ Alternatives considered: Storing the last fire time and price on the alert_rules
 
 Consequences: History survives rule deletion and can be listed without a join. Some values are duplicated between alert_rules and alert_events.
 
+Revision recorded on 2026-10-03: The three business tables now include owner_id, and ticker uniqueness is per owner. Two supporting tables, accounts and rate_limits, provide access control without foreign keys into either domain. alert_rules also has a random rule_token so a stale evaluation cannot fire a replacement row with a reused ID. Startup preserves old shared rows under inaccessible owner 0; new accounts do not inherit them. These changes match the revised schema diagram.
+
 ## 4. Testing approach
 
 Date: 2026-10-01
@@ -56,7 +62,9 @@ Alternatives considered: Measuring every file including the routes. Rejected bec
 
 Consequences: Route bugs are only caught by one end-to-end test and the contract test, not by unit tests. The fakes keep tests fast and offline, but they would not notice if Finnhub changed its response format.
 
-## 5. No user accounts or login
+Revision recorded on 2026-10-03: I added tests for private ownership, password hashing, CSRF, session expiry/revocation, SQLite throttling, schema upgrades and concurrent firing. Access-control code is included in coverage. The current README reports the new measured result. A real-browser check covers desktop and mobile layouts; it does not replace unit tests or imply real API compatibility.
+
+## 5. Scope boundaries and account access
 
 Date: 2026-10-01
 
@@ -69,3 +77,13 @@ Decision: No login and no users table. There is one shared watchlist and one set
 Alternatives considered: Flask-Login with a users table and a user_id on every row. Rejected because it adds a dependency and a password store to secure and explain, with no benefit for a single user.
 
 Consequences: Anyone who can reach the app can change its data, so Assignment 2 has to restrict network access or add auth before exposing it. Adding users later means a user_id column on all three tables.
+
+Revision recorded on 2026-10-03, superseding the original no-login decision:
+
+Context: The intended audience is retail investors using separate private workspaces on one small instance. A shared anonymous watchlist would expose their notes and allow them to change each other's rules.
+
+Decision: I added username/password accounts as supporting access control and kept watchlist and alerts as the two business domains. I deliberately did not build trading, email/push notifications, password recovery or MFA for this local assignment.
+
+Alternatives considered: Keeping a shared anonymous workspace was rejected because it does not provide private ownership. An external identity service or email delivery provider was rejected because it introduces external runtime/setup dependencies beyond the price API. A larger account-management framework was rejected to keep the code explainable.
+
+Consequences: The app now needs password hashing, revocable expiring sessions, CSRF checks, rate limits and owner-scoped queries. One account has one active session, and a forgotten password cannot be recovered in this version; HTTPS and deployment access controls are still needed before any future public use.
