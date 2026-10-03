@@ -1,42 +1,29 @@
 {% extends "base.html" %}
 {% block title %}Watchlist{% endblock %}
 {% block content %}
-<h1>Watchlist</h1>
-
-<form class="add card" method="post" action="{{ url_for('watchlist.add_item') }}">
-  <label>Ticker <input name="ticker" maxlength="10" placeholder="AAPL" autocomplete="off" required></label>
-  <label>Name <input name="name" placeholder="Apple" required></label>
-  <label>Notes <input name="notes" placeholder="Optional"></label>
-  <button type="submit">Add asset</button>
-</form>
-
-<section>
-  <div class="section-head"><h2>Tracked assets</h2></div>
-  <div class="card">
-    {% if items %}
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Ticker</th><th>Name</th><th>Notes</th><th>Added (UTC)</th><th></th></tr></thead>
-        <tbody>
-        {% for item in items %}
-          <tr>
-            <td>{{ item.ticker }}</td>
-            <td>{{ item.name }}</td>
-            <td class="wrap quiet">{{ item.notes }}</td>
-            <td class="quiet">{{ item.added_at[:16]|replace("T", " ") }}</td>
-            <td class="end">
-              <form class="inline" method="post" action="{{ url_for('watchlist.delete_item', ticker=item.ticker) }}">
-                <button class="link" type="submit">Remove</button>
-              </form>
-            </td>
-          </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-    {% else %}
-    <p class="empty">No assets on the watchlist yet.</p>
-    {% endif %}
-  </div>
-</section>
+<div class="heading"><div><div class="eyebrow">Your market, at a glance</div><h1>Your watchlist</h1><p>Keep the stocks you follow together, with a note on what you are watching for.</p></div><a class="button secondary" href="{{ url_for('alerts.list_rules') }}">Manage price alerts <span aria-hidden="true">→</span></a></div>
+<div class="stats" aria-label="Workspace summary">
+  <div class="stat"><div class="stat-label">Tracked assets <span aria-hidden="true">▤</span></div><span class="stat-value">{{ asset_count }}</span><small>Stocks on your watchlist</small></div>
+  <div class="stat"><div class="stat-label">Active alerts <span aria-hidden="true">◎</span></div><span class="stat-value">{{ active_count }}</span><small>Waiting for a price condition</small></div>
+  <div class="stat"><div class="stat-label">Alerts triggered <span aria-hidden="true">↗</span></div><span class="stat-value">{{ event_count }}</span><small>Saved in your history</small></div>
+</div>
+<div class="layout">
+  <section class="card" aria-labelledby="assets-heading">
+    <div class="card-head"><div><h2 id="assets-heading">Tracked assets</h2><p>Your notes and tickers, in one place.</p></div><span class="badge">{{ items|length }} assets</span></div>
+    {% if items %}<div class="table-wrap"><table><thead><tr><th scope="col">Asset</th><th scope="col">Your note</th><th scope="col">Added (UTC)</th><th scope="col">Actions</th></tr></thead><tbody>
+      {% for item in items %}<tr><td><span class="ticker">{{ item.ticker }}</span><span class="company">{{ item.name }}</span></td><td class="note">{{ item.notes or 'No note added' }}</td><td class="nowrap muted">{{ item.added_at[:10] }}</td><td class="end"><form class="inline" method="post" action="{{ url_for('watchlist.delete_item', ticker=item.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="link danger" type="submit" aria-label="Remove {{ item.ticker }}">Remove</button></form></td></tr>{% endfor %}
+    </tbody></table></div>{% else %}<div class="empty"><div class="empty-icon" aria-hidden="true">+</div><h3>Your next idea starts here</h3><p>No assets on the watchlist yet. Add a stock you follow, then set an alert for a price that matters to you.</p><a class="button secondary" href="#add-asset">Add your first asset</a></div>{% endif %}
+  </section>
+  <aside class="stack" aria-label="Watchlist tools">
+    <section class="card" id="add-asset"><div class="card-head"><div><h2>Add an asset</h2><p>Start with a US stock ticker.</p></div></div><div class="card-body"><form class="add" method="post" action="{{ url_for('watchlist.add_item') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Ticker<input name="ticker" maxlength="10" placeholder="AAPL" autocomplete="off" required></label>
+      <label>Company name<input name="name" maxlength="100" placeholder="Apple" required></label>
+      <label>Note <span class="hint">Optional · up to 500 characters</span><input name="notes" maxlength="500" placeholder="What are you watching for?"></label>
+      <button type="submit">+ Add to watchlist</button>
+    </form></div></section>
+    <section class="card"><div class="card-head"><h2>A simple routine</h2></div><div class="card-body"><ol class="guide"><li><span><strong>Pick your stocks</strong>Add a ticker and a short note.</span></li><li><span><strong>Set a threshold</strong>Create an above or below rule in Price alerts.</span></li><li><span><strong>Check back</strong>Triggered alerts appear in your history.</span></li></ol></div></section>
+  </aside>
+</div>
+<p class="hint">Removing an asset pauses its active rules. Add the same ticker again to resume them.</p>
 {% endblock %}

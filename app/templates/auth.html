@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Create account' if mode == 'register' else 'Sign in' if mode == 'login' else 'Request unavailable' }}{% endblock %}
+{% block content %}
+<div class="auth-shell">
+  <div class="auth-intro">
+    <a class="brand" href="{{ url_for('sign_in') }}"><span class="brand-mark" aria-hidden="true">↗</span><span>Watchlist<small>Your market workspace</small></span></a>
+    <h1>Keep an eye on<br>what matters to you.</h1>
+    <p>A focused space for the stocks you follow. Set a price threshold and review what triggered, without keeping a chart open all day.</p>
+    <ol class="guide"><li><span><strong>Your watchlist</strong>Save tickers and the reasons you follow them.</span></li><li><span><strong>Your price rules</strong>Choose a threshold above or below a price.</span></li><li><span><strong>Your trigger history</strong>Review one-shot alerts in your private account.</span></li></ol>
+  </div>
+  <section class="card auth-card" aria-labelledby="auth-title">
+    <div class="eyebrow">Your private workspace</div>
+    <h2 id="auth-title">{{ 'Create your account' if mode == 'register' else 'Welcome back' if mode == 'login' else 'Unable to complete request' }}</h2>
+    {% if error %}<div class="message error" role="alert">{{ error }}</div>{% endif %}
+    {% if mode != 'error' %}
+    <p class="hint">{{ 'Choose a username and a long, unique passphrase.' if mode == 'register' else 'Sign in to your watchlist and price alerts.' }}</p>
+    <form class="add" method="post" action="{{ url_for('register') if mode == 'register' else url_for('sign_in') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>Username<input name="username" autocomplete="username" minlength="3" maxlength="30" pattern="[a-zA-Z0-9_]{3,30}" required placeholder="e.g. alex_invests"></label>
+      <label>Password<input name="password" type="password" autocomplete="{{ 'new-password' if mode == 'register' else 'current-password' }}" {% if mode == 'register' %}minlength="15"{% endif %} maxlength="128" required></label>
+      {% if mode == 'register' %}<p class="hint">15–128 characters. No email is collected. Password recovery is not available in this version, so keep your password safe.</p>{% endif %}
+      <button type="submit">{{ 'Create account' if mode == 'register' else 'Sign in' }} <span aria-hidden="true">→</span></button>
+    </form>
+    <p class="auth-footer">{% if mode == 'register' %}Already have an account? <a href="{{ url_for('sign_in') }}">Sign in</a>{% else %}New here? <a href="{{ url_for('register') }}">Create an account</a>{% endif %}</p>
+    {% else %}<a class="button secondary" href="{{ url_for('watchlist.list_items') if g.user else url_for('sign_in') }}">Return to workspace</a>{% endif %}
+  </section>
+</div>
+{% endblock %}

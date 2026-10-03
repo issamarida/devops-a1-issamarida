@@ -65,7 +65,9 @@ def test_rejects_bad_condition(service):
         service.create_rule("AAPL", "equals", 100)
 
 
-@pytest.mark.parametrize("threshold", ["0", -5, "abc", None, "nan", "inf", float("-inf")])
+@pytest.mark.parametrize(
+    "threshold", ["0", -5, "abc", None, "nan", "inf", float("-inf")]
+)
 def test_rejects_bad_threshold(service, threshold):
     with pytest.raises(InvalidRuleError):
         service.create_rule("AAPL", "above", threshold)
@@ -142,3 +144,31 @@ def test_delete_rule(service):
 
     assert service.delete_rule(rule["id"]) is True
     assert service.list_rules() == []
+
+
+@pytest.mark.parametrize("price", [True, 0, -10, float("nan"), float("inf"), "100"])
+def test_bad_price_cannot_fire_a_rule(service, prices, price):
+    service.create_rule("AAPL", "above", 1)
+    prices.prices["AAPL"] = price
+    assert service.evaluate_all() == []
+    assert service.list_events() == []
+    assert service.list_rules()[0]["is_active"] == 1
+
+
+def test_readding_ticker_resumes_dormant_rule(service, watchlist):
+    service.create_rule("AAPL", "above", 100)
+    watchlist.tickers.remove("AAPL")
+    assert service.list_rules()[0]["status"] == "dormant"
+    assert service.evaluate_all() == []
+    watchlist.tickers.add("AAPL")
+    assert service.list_rules()[0]["status"] == "active"
+    assert len(service.evaluate_all()) == 1
+    assert service.list_rules()[0]["status"] == "fired"
+
+
+def test_rule_capacity_is_enforced(service):
+    service.repository.max_rules = 1
+    service.create_rule("AAPL", "above", 100)
+    with pytest.raises(InvalidRuleError, match="up to 1 rules"):
+        service.create_rule("AAPL", "below", 300)
+    assert len(service.list_rules()) == 1

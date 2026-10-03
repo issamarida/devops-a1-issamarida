@@ -24,5 +24,10 @@ class CachedPriceSource:
                     return price
             # PriceUnavailable passes straight through, so a failure is never stored.
             price = self.source.get_price(ticker)
-            self.prices[ticker] = (price, now)
+            self.prices = {
+                key: value
+                for key, value in self.prices.items()
+                if self.clock() - value[1] < self.ttl_seconds
+            }
+            self.prices[ticker] = (price, self.clock())
             return price

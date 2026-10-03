@@ -8,7 +8,7 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from flask import Flask, redirect, url_for
+from flask import Flask, g, redirect, url_for
 
 from app.alerts.repository import AlertRepository
 from app.alerts.routes import create_alerts_blueprint
@@ -18,6 +18,7 @@ from app.db import get_connection, init_db
 from app.market.cache import CachedPriceSource
 from app.market.demo import DemoPriceSource
 from app.market.finnhub import FinnhubSource
+from app.security import install_access
 from app.watchlist import SCHEMA_PATH as WATCHLIST_SCHEMA
 from app.watchlist.repository import WatchlistRepository
 from app.watchlist.routes import create_watchlist_blueprint
@@ -38,15 +39,18 @@ def create_app(config: Config, *, price_source=None) -> Flask:
     app = Flask(__name__)
     app.secret_key = config.secret_key
 
-    watchlist_service = WatchlistService(WatchlistRepository(config.db_path))
-    app.register_blueprint(create_watchlist_blueprint(watchlist_service))
+    access = install_access(app, config)
 
     # Tests pass a fake price_source. The real app picks one from the config.
     app.config["USING_DEMO_PRICES"] = False
     if price_source is None:
         if config.price_api_key:
             price_source = CachedPriceSource(
-                FinnhubSource(config.price_api_key), config.price_cache_ttl_seconds
+                FinnhubSource(
+                    config.price_api_key,
+                    requests_per_minute=config.quote_requests_per_minute,
+                ),
+                config.price_cache_ttl_seconds,
             )
             logger.info("Price source: Finnhub")
         else:
@@ -54,12 +58,53 @@ def create_app(config: Config, *, price_source=None) -> Flask:
             app.config["USING_DEMO_PRICES"] = True
             logger.info("Price source: demo prices, PRICE_API_KEY is not set")
 
-    # The watchlist service is passed in as the WatchlistReader.
-    alert_service = AlertService(
-        AlertRepository(config.db_path), price_source, watchlist_service
+    def watchlist_for(owner_id):
+        return WatchlistService(
+            WatchlistRepository(config.db_path, owner_id, config.max_watchlist_items)
+        )
+
+    def alerts_for(owner_id):
+        return AlertService(
+            AlertRepository(config.db_path, owner_id, config.max_alert_rules),
+            price_source,
+            watchlist_for(owner_id),
+        )
+
+    app.register_blueprint(
+        create_watchlist_blueprint(lambda: watchlist_for(g.user["id"]))
     )
-    app.extensions["alert_service"] = alert_service
-    app.register_blueprint(create_alerts_blueprint(alert_service))
+    app.register_blueprint(create_alerts_blueprint(lambda: alerts_for(g.user["id"])))
+
+    class AllAccounts:
+        def evaluate_all(self):
+            fired = []
+            for owner_id in access.account_ids():
+                try:
+                    fired.extend(alerts_for(owner_id).evaluate_all())
+                except Exception:
+                    logger.exception("Alert check failed for an account")
+            return fired
+
+    app.extensions["alert_service"] = AllAccounts()
+    app.extensions["alerts_for"] = alerts_for
+    app.extensions["watchlist_for"] = watchlist_for
+
+    @app.context_processor
+    def workspace_context():
+        if not g.user:
+            return {}
+        items = watchlist_for(g.user["id"]).list_items()
+        alerts = alerts_for(g.user["id"])
+        rules = alerts.list_rules()
+        return {
+            "asset_count": len(items),
+            "watched_tickers": [item.ticker for item in items],
+            "active_count": sum(rule["status"] == "active" for rule in rules),
+            "dormant_count": sum(rule["status"] == "dormant" for rule in rules),
+            "event_count": alerts.count_events(),
+            "using_demo_prices": app.config["USING_DEMO_PRICES"],
+            "poll_interval": config.poll_interval_seconds,
+        }
 
     @app.get("/")
     def index():
@@ -73,6 +118,8 @@ def create_app(config: Config, *, price_source=None) -> Flask:
                 conn.execute("SELECT 1 FROM watchlist_items LIMIT 1").fetchone()
                 conn.execute("SELECT 1 FROM alert_rules LIMIT 1").fetchone()
                 conn.execute("SELECT 1 FROM alert_events LIMIT 1").fetchone()
+                conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone()
+                conn.execute("SELECT 1 FROM rate_limits LIMIT 1").fetchone()
         except sqlite3.Error:
             # The details go to the log only, never into the response.
             logger.exception("Health check failed")

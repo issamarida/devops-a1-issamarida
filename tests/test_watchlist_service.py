@@ -34,7 +34,9 @@ def test_add_item_rejects_blank_name(watchlist_service, name):
     assert watchlist_service.list_items() == []
 
 
-@pytest.mark.parametrize("ticker", ["", "   ", "AA PL", "AAPL$", "BRK-B", "ABCDEFGHIJK"])
+@pytest.mark.parametrize(
+    "ticker", ["", "   ", "AA PL", "AAPL$", "BRK-B", "ABCDEFGHIJK"]
+)
 def test_add_item_rejects_invalid_ticker(watchlist_service, ticker):
     with pytest.raises(InvalidWatchlistItemError):
         watchlist_service.add_item(ticker, "Some Company")
@@ -63,7 +65,9 @@ def test_remove_item_that_is_not_watched_returns_false(watchlist_service):
 
 
 def test_add_item_accepts_ticker_of_exactly_ten_characters(watchlist_service):
-    assert watchlist_service.add_item("ABCDEFGHIJ", "Ten Letters").ticker == "ABCDEFGHIJ"
+    assert (
+        watchlist_service.add_item("ABCDEFGHIJ", "Ten Letters").ticker == "ABCDEFGHIJ"
+    )
 
 
 def test_notes_default_to_empty(watchlist_service):
@@ -72,3 +76,22 @@ def test_notes_default_to_empty(watchlist_service):
 
 def test_list_items_starts_empty(watchlist_service):
     assert watchlist_service.list_items() == []
+
+
+@pytest.mark.parametrize(
+    "ticker,name,notes",
+    [("...", "name", ""), ("AAPL", "x" * 101, ""), ("AAPL", "name", "x" * 501)],
+)
+def test_rejects_unusable_ticker_or_oversized_text(
+    watchlist_service, ticker, name, notes
+):
+    with pytest.raises(InvalidWatchlistItemError):
+        watchlist_service.add_item(ticker, name, notes)
+
+
+def test_watchlist_capacity_is_enforced(watchlist_service):
+    watchlist_service.repository.max_items = 1
+    watchlist_service.add_item("AAPL", "Apple")
+    with pytest.raises(InvalidWatchlistItemError, match="limited to 1"):
+        watchlist_service.add_item("MSFT", "Microsoft")
+    assert len(watchlist_service.list_items()) == 1

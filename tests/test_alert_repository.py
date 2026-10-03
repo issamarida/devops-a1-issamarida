@@ -83,3 +83,52 @@ def test_delete_rule_keeps_event_with_null_rule_id(repo):
 
 def test_delete_missing_rule_returns_false(repo):
     assert repo.delete_rule(999) is False
+
+
+def test_stale_rule_cannot_fire_a_replacement_with_reused_id(repo):
+    old = repo.get_rule(repo.add_rule("AAPL", "above", 100))
+    repo.delete_rule(old["id"])
+    replacement_id = repo.add_rule("MSFT", "below", 50)
+    assert replacement_id == old["id"]  # SQLite can reuse an INTEGER PRIMARY KEY.
+    assert repo.fire_rule(old, 150) is False
+    assert repo.get_rule(replacement_id)["is_active"] == 1
+    assert repo.list_events() == []
+
+
+def test_two_threads_fire_only_one_event(repo):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    rule = repo.get_rule(repo.add_rule("AAPL", "above", 100))
+    barrier = Barrier(2)
+
+    def fire():
+        barrier.wait()
+        return repo.fire_rule(rule, 150)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: fire(), range(2)))
+    assert sorted(results) == [False, True]
+    assert len(repo.list_events()) == 1
+
+
+def test_owner_cannot_read_delete_or_fire_another_owners_rule(db_path):
+    alice = AlertRepository(db_path, 1)
+    bob = AlertRepository(db_path, 2)
+    rule = alice.get_rule(alice.add_rule("AAPL", "above", 100))
+    assert bob.get_rule(rule["id"]) is None
+    assert bob.delete_rule(rule["id"]) is False
+    assert bob.fire_rule(rule, 150) is False
+    assert bob.list_rules() == bob.list_active_rules() == bob.list_events() == []
+    assert alice.fire_rule(rule, 150)
+    assert bob.list_events() == []
+
+
+def test_history_page_is_bounded_but_full_history_is_retained(repo):
+    for _ in range(105):
+        rule = repo.get_rule(repo.add_rule("AAPL", "above", 100))
+        assert repo.fire_rule(rule, 150)
+        repo.delete_rule(rule["id"])
+    assert len(repo.list_events()) == 100
+    assert repo.count_events() == 105
+    assert repo.list_events()[0]["id"] == 105

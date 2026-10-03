@@ -220,3 +220,8 @@ __marimo__/
 # App data
 # SQLite database lives here at runtime (see DATA_DIR in app/config.py)
 data/
+
+# Local databases and environment variants
+*.db
+*.db-*
+.env.*

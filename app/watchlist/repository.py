@@ -13,26 +13,45 @@ class WatchlistItem:
     name: str
     notes: str
     added_at: str
+    owner_id: int = 0
+
+
+class WatchlistLimitReached(ValueError):
+    pass
 
 
 class WatchlistRepository:
-    def __init__(self, db_path):
+    def __init__(self, db_path, owner_id=0, max_items=30):
         self.db_path = db_path
+        self.owner_id = owner_id
+        self.max_items = max_items
 
     def add(self, ticker, name, notes, added_at) -> WatchlistItem:
         """Raises sqlite3.IntegrityError if the ticker is already there (UNIQUE column)."""
         with closing(get_connection(self.db_path)) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            count = conn.execute(
+                "SELECT COUNT(*) FROM watchlist_items WHERE owner_id = ?",
+                (self.owner_id,),
+            ).fetchone()[0]
+            if count >= self.max_items:
+                raise WatchlistLimitReached(
+                    f"Your watchlist is limited to {self.max_items} assets. Remove an asset first."
+                )
             cursor = conn.execute(
-                "INSERT INTO watchlist_items (ticker, name, notes, added_at) VALUES (?, ?, ?, ?)",
-                (ticker, name, notes, added_at),
+                "INSERT INTO watchlist_items (ticker, name, notes, added_at, owner_id) VALUES (?, ?, ?, ?, ?)",
+                (ticker, name, notes, added_at, self.owner_id),
             )
             conn.commit()
-        return WatchlistItem(cursor.lastrowid, ticker, name, notes, added_at)
+        return WatchlistItem(
+            cursor.lastrowid, ticker, name, notes, added_at, self.owner_id
+        )
 
     def get_by_ticker(self, ticker) -> WatchlistItem | None:
         with closing(get_connection(self.db_path)) as conn:
             row = conn.execute(
-                "SELECT * FROM watchlist_items WHERE ticker = ?", (ticker,)
+                "SELECT * FROM watchlist_items WHERE ticker = ? AND owner_id = ?",
+                (ticker, self.owner_id),
             ).fetchone()
         if row is None:
             return None
@@ -40,13 +59,19 @@ class WatchlistRepository:
 
     def list_all(self) -> list[WatchlistItem]:
         with closing(get_connection(self.db_path)) as conn:
-            rows = conn.execute("SELECT * FROM watchlist_items ORDER BY ticker").fetchall()
+            rows = conn.execute(
+                "SELECT * FROM watchlist_items WHERE owner_id = ? ORDER BY ticker",
+                (self.owner_id,),
+            ).fetchall()
         return [WatchlistItem(**row) for row in rows]
 
     def delete(self, ticker) -> bool:
         """Returns True if a row was deleted."""
         with closing(get_connection(self.db_path)) as conn:
-            cursor = conn.execute("DELETE FROM watchlist_items WHERE ticker = ?", (ticker,))
+            cursor = conn.execute(
+                "DELETE FROM watchlist_items WHERE ticker = ? AND owner_id = ?",
+                (ticker, self.owner_id),
+            )
             conn.commit()
         return cursor.rowcount > 0
 

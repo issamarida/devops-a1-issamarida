@@ -49,7 +49,10 @@ def is_within(name: str, package: str) -> bool:
 
 
 def all_modules() -> list[tuple[Path, str, list[str]]]:
-    return [(path, module_name(path), imports_of(path)) for path in sorted(APP_DIR.rglob("*.py"))]
+    return [
+        (path, module_name(path), imports_of(path))
+        for path in sorted(APP_DIR.rglob("*.py"))
+    ]
 
 
 def check_forbidden(owner: str, forbidden: tuple[str, ...]) -> list[str]:
@@ -69,7 +72,9 @@ def test_alerts_does_not_import_watchlist_or_market():
 
 
 def test_watchlist_does_not_import_alerts_market_or_ports():
-    problems = check_forbidden("app.watchlist", ("app.alerts", "app.market", "app.ports"))
+    problems = check_forbidden(
+        "app.watchlist", ("app.alerts", "app.market", "app.ports")
+    )
     assert problems == [], "\n".join(problems)
 
 
@@ -83,10 +88,14 @@ def test_only_create_app_imports_from_more_than_one_domain():
     for path, module, imports in all_modules():
         if module == "app":  # app/__init__.py, the composition root
             continue
-        hits = sorted({name for name in imports if any(is_within(name, d) for d in DOMAINS)})
+        hits = sorted(
+            {name for name in imports if any(is_within(name, d) for d in DOMAINS)}
+        )
         domains = {d for d in DOMAINS if any(is_within(name, d) for name in hits)}
         if len(domains) >= 2:
-            problems.append(f"{path.relative_to(APP_DIR.parent)} imports {', '.join(hits)}")
+            problems.append(
+                f"{path.relative_to(APP_DIR.parent)} imports {', '.join(hits)}"
+            )
     assert problems == [], "\n".join(problems)
 
 
@@ -104,3 +113,8 @@ def test_module_name_maps_files_to_modules():
     assert module_name(APP_DIR / "alerts" / "service.py") == "app.alerts.service"
     assert module_name(APP_DIR / "alerts" / "__init__.py") == "app.alerts"
     assert module_name(APP_DIR / "__init__.py") == "app"
+
+
+def test_access_control_has_no_business_domain_imports():
+    imports = imports_of(APP_DIR / "security.py")
+    assert not any(is_within(name, domain) for name in imports for domain in DOMAINS)

@@ -91,7 +91,11 @@ def test_finnhub_sends_the_key_in_the_header_not_the_url():
 @pytest.mark.parametrize(
     "get_behaviour",
     [
-        {"side_effect": requests.Timeout(f"timed out calling {QUOTE_URL}?token={FAKE_KEY}")},
+        {
+            "side_effect": requests.Timeout(
+                f"timed out calling {QUOTE_URL}?token={FAKE_KEY}"
+            )
+        },
         {"return_value": fake_response(status_code=429, payload={"error": "limit"})},
         {"return_value": fake_response(json_error=ValueError(f"bad json {FAKE_KEY}"))},
         {"return_value": fake_response(payload={"c": 0})},
@@ -100,7 +104,16 @@ def test_finnhub_sends_the_key_in_the_header_not_the_url():
         {"return_value": fake_response(payload={"c": None})},
         {"return_value": fake_response(payload=["not", "a", "dict"])},
     ],
-    ids=["timeout", "http-429", "invalid-json", "c-zero", "c-missing", "c-negative", "c-null", "not-a-dict"],
+    ids=[
+        "timeout",
+        "http-429",
+        "invalid-json",
+        "c-zero",
+        "c-missing",
+        "c-negative",
+        "c-null",
+        "not-a-dict",
+    ],
 )
 def test_finnhub_failure_raises_price_unavailable_without_the_key(get_behaviour):
     with patch("app.market.finnhub.requests.get", **get_behaviour):
@@ -183,3 +196,47 @@ def test_cache_with_ttl_zero_always_refetches():
     cached.get_price("AAPL")
     cached.get_price("AAPL")
     assert source.calls == ["AAPL", "AAPL"]
+
+
+@pytest.mark.parametrize(
+    "price", [True, False, float("inf"), float("-inf"), float("nan"), "100"]
+)
+def test_finnhub_rejects_invalid_numeric_prices(price):
+    with patch(
+        "app.market.finnhub.requests.get",
+        return_value=fake_response(payload={"c": price}),
+    ):
+        with pytest.raises(PriceUnavailable):
+            FinnhubSource(FAKE_KEY).get_price("AAPL")
+
+
+def test_cache_ttl_starts_after_fetch_finishes():
+    clock = FakeClock(0)
+
+    class SlowSource:
+        def get_price(self, ticker):
+            clock.now += 5
+            return 100
+
+    cache = CachedPriceSource(SlowSource(), 10, clock)
+    cache.get_price("AAPL")
+    clock.now = 12
+    assert cache.get_price("AAPL") == 100
+    assert clock.now == 12
+
+
+def test_live_quotes_obey_global_budget_and_recover_after_window():
+    clock = FakeClock()
+    source = FinnhubSource(FAKE_KEY, requests_per_minute=2, clock=clock)
+    with patch(
+        "app.market.finnhub.requests.get",
+        return_value=fake_response(payload={"c": 100}),
+    ) as get:
+        source.get_price("AAPL")
+        source.get_price("MSFT")
+        with pytest.raises(PriceUnavailable, match="budget"):
+            source.get_price("TSLA")
+        assert get.call_count == 2
+        clock.now = 60
+        assert source.get_price("TSLA") == 100
+        assert get.call_count == 3
