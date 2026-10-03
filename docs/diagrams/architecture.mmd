@@ -6,12 +6,17 @@ flowchart TB
         watch["WATCHLIST<br/>Routes / Service<br/>Repository"]
         alert["ALERTS<br/>Routes / Service<br/>Repository"]
         reader["WatchlistReader<br/>Same owner"]
-        price["PriceSource<br/>Cached Finnhub"]
+        price["LivePrices<br/>PriceSource + snapshot"]
+        quotes["/api/quotes<br/>Own tickers only"]
+        stream["Finnhub stream<br/>Daemon threads, app.py"]
+        rest["Cached REST quotes<br/>Key in header"]
         poller["Daemon poller<br/>Started only by app.py"]
     end
     db[("SQLite<br/>DATA_DIR/app.db")]
-    api["Finnhub API"]
+    api["Finnhub REST API"]
+    ws["Finnhub WebSocket"]
     browser --> access
+    browser -. polls .-> quotes
     root -. wires .-> access
     root -. scopes .-> watch
     root -. scopes .-> alert
@@ -21,11 +26,16 @@ flowchart TB
     alert --> reader
     watch -. satisfies .-> reader
     alert --> price
-    price --> api
+    quotes --> price
+    price --> stream
+    price --> rest
+    stream --> ws
+    stream -. watched tickers .-> watch
+    rest --> api
     watch --> db
     alert --> db
     access --> db
     classDef support fill:#eef2fa,stroke:#7b90b3,color:#182337
     classDef feature fill:#e9f3ee,stroke:#4c8c6b,color:#182337
-    class root,access,reader,poller,price support
+    class root,access,reader,poller,price,quotes,stream,rest support
     class watch,alert feature

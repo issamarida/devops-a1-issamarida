@@ -197,6 +197,8 @@ def install_access(app, config):
                     400,
                     description="This form has expired. Reload the page and try again.",
                 )
+        if request.blueprint == "market" and not g.user:
+            return {"error": "Sign in to see prices."}, 401
         if (
             request.blueprint in ("watchlist", "alerts")
             or request.endpoint == "sign_out"
@@ -213,7 +215,8 @@ def install_access(app, config):
     def response_headers(response):
         nonce = getattr(g, "csp_nonce", "")
         response.headers["Content-Security-Policy"] = (
-            f"default-src 'none'; style-src 'nonce-{nonce}'; img-src 'self' data:; "
+            f"default-src 'none'; style-src 'nonce-{nonce}'; script-src 'nonce-{nonce}'; "
+            "connect-src 'self'; img-src 'self' data:; "
             "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
         )
         response.headers["X-Content-Type-Options"] = "nosniff"

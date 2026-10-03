@@ -119,7 +119,7 @@ def test_manual_check_reports_unavailable_prices(client, prices):
     add_aapl_with_rule(client)
     prices.price = float("nan")
     text = page(post_form(client, "/alerts/evaluate", follow_redirects=True))
-    assert "Some prices were unavailable." in text
+    assert "1 ticker had no fresh quote yet; those rules stay active." in text
     assert "No rule has fired yet." in text
 
 
@@ -149,9 +149,9 @@ def test_missing_key_keeps_app_ready_but_cannot_fire_rules(tmp_path, monkeypatch
         assert client.get("/health").status_code == 200
         add_aapl_with_rule(client)
         text = page(post_form(client, "/alerts/evaluate", follow_redirects=True))
-        assert "Finnhub not configured" in text
-        assert "Price checks are unavailable." in text
-        assert "Demo prices" not in text
+        assert "Checked the rules. 0 fired." in text
+        assert "unavailable" not in text
+        assert "Demo" not in text
         assert app.extensions["alert_service"].evaluate_all() == []
         assert app.extensions["alerts_for"](1).list_events() == []
         assert app.extensions["alerts_for"](1).list_rules()[0]["is_active"] == 1
@@ -168,8 +168,8 @@ def test_configured_finnhub_quote_is_the_recorded_price(tmp_path, monkeypatch):
         app, client = finnhub_client(tmp_path, monkeypatch, "fake-key-for-tests")
         add_aapl_with_rule(client)
         text = page(post_form(client, "/alerts/evaluate", follow_redirects=True))
-        assert "Finnhub configured" in text
-        assert "Demo prices" not in text
+        assert "Live market data" in text
+        assert "Demo" not in text
         assert (
             app.extensions["alerts_for"](1).list_events()[0]["observed_price"] == 187.44
         )
@@ -183,6 +183,112 @@ def test_rejected_finnhub_key_does_not_fall_back_to_fake_prices(tmp_path, monkey
         app, client = finnhub_client(tmp_path, monkeypatch, "fake-key-for-tests")
         add_aapl_with_rule(client)
         text = page(post_form(client, "/alerts/evaluate", follow_redirects=True))
-        assert "Some prices were unavailable." in text
+        assert "had no fresh quote yet" in text
         assert app.extensions["alerts_for"](1).list_events() == []
         assert app.extensions["alerts_for"](1).list_rules()[0]["is_active"] == 1
+
+
+# The /api/quotes endpoint the pages poll
+
+
+class SnapshotPrices(FakePriceSource):
+    def __init__(self):
+        super().__init__()
+        self.asked = []
+
+    def snapshot(self, tickers):
+        self.asked.append(list(tickers))
+        return {
+            "status": "live",
+            "server_time": 1.0,
+            "quotes": {t: {"price": self.price, "change": None, "percent": None, "source": "live", "at": 1.0} for t in tickers},
+        }
+
+
+@pytest.fixture
+def api_client(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PRICE_API_KEY", "fake-key-for-tests")
+    prices = SnapshotPrices()
+    app = create_app(load_config(), price_source=prices)
+    return app, prices
+
+
+def sign_up(client, username):
+    password = "a long test passphrase"
+    post_form(client, "/register", data={"username": username, "password": password})
+    post_form(client, "/login", data={"username": username, "password": password})
+
+
+def test_quotes_api_rejects_signed_out_requests_with_json(api_client):
+    app, prices = api_client
+    response = app.test_client().get("/api/quotes")
+    assert response.status_code == 401
+    assert response.is_json
+    assert prices.asked == []
+
+
+def test_quotes_api_returns_only_the_accounts_own_tickers(api_client):
+    app, prices = api_client
+    alice, bob = app.test_client(), app.test_client()
+    sign_up(alice, "alice")
+    sign_up(bob, "bob")
+    post_form(alice, "/watchlist", data={"ticker": "AAPL", "name": "Apple"})
+    post_form(bob, "/watchlist", data={"ticker": "TSLA", "name": "Tesla"})
+
+    response = alice.get("/api/quotes")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert list(response.get_json()["quotes"]) == ["AAPL"]
+    assert prices.asked == [["AAPL"]]
+    assert "fake-key-for-tests" not in response.get_data(as_text=True)
+
+
+def test_pages_allow_only_their_own_script_and_same_origin_fetch(api_client):
+    app, _ = api_client
+    client = app.test_client()
+    sign_up(client, "alice")
+    post_form(client, "/watchlist", data={"ticker": "AAPL", "name": "Apple"})
+    response = client.get("/watchlist")
+    policy = response.headers["Content-Security-Policy"]
+    text = page(response)
+    nonce = policy.split("script-src 'nonce-")[1].split("'")[0]
+    assert f'<script nonce="{nonce}">' in text
+    assert "connect-src 'self'" in policy
+    assert 'data-quote="AAPL" data-field="price"' in text
+    assert "/api/quotes" in text
+    assert "finnhub.io" not in text and "fake-key-for-tests" not in text
+
+
+def test_stream_follows_the_most_watched_tickers_of_real_accounts(api_client):
+    from app.watchlist.repository import most_watched_tickers
+
+    app, _ = api_client
+    alice, bob = app.test_client(), app.test_client()
+    sign_up(alice, "alice")
+    sign_up(bob, "bob")
+    for client in (alice, bob):
+        post_form(client, "/watchlist", data={"ticker": "TSLA", "name": "Tesla"})
+    post_form(alice, "/watchlist", data={"ticker": "AAPL", "name": "Apple"})
+    db_path = load_config().db_path
+    assert most_watched_tickers(db_path) == ["TSLA", "AAPL"]
+
+
+def test_runtime_wiring_builds_a_stream_that_create_app_never_starts(tmp_path, monkeypatch):
+    from app.market.stream import FinnhubStream
+
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("PRICE_API_KEY", "fake-key-for-tests")
+    with patch_connect() as connect:
+        app = create_app(load_config())
+    stream = app.extensions["price_stream"]
+    assert isinstance(stream, FinnhubStream) and stream.enabled
+    assert not stream.connected
+    connect.assert_not_called()
+
+
+def patch_connect():
+    from unittest.mock import patch
+
+    return patch("app.market.stream.websocket.WebSocketApp")

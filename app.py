@@ -6,13 +6,19 @@ import sys
 from waitress import serve
 
 from app import create_app
-from app.config import load_config
+from app.config import RedactSecret, load_config
 from app.poller import start_poller
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 config = load_config()
+# Belt and braces: even a library log line can never print the Finnhub key.
+for handler in logging.getLogger().handlers:
+    handler.addFilter(RedactSecret(config.price_api_key))
+# The stream logs its own short warnings, so the library's verbose ones are muted.
+logging.getLogger("websocket").setLevel(logging.CRITICAL)
 logging.info("Starting on %s:%s with database %s", config.host, config.port, config.db_path)
 app = create_app(config)
+app.extensions["price_stream"].start()
 start_poller(app.extensions["alert_service"], config.poll_interval_seconds)
 serve(app, host=config.host, port=config.port)

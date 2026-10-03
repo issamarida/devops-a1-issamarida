@@ -1,14 +1,6 @@
 """Alerts pages. Reads the form, calls the service, shows the result."""
 
-from flask import (
-    Blueprint,
-    current_app,
-    flash,
-    redirect,
-    render_template,
-    request,
-    url_for,
-)
+from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from app.alerts.service import CONDITIONS, InvalidRuleError
 
@@ -48,20 +40,13 @@ def create_alerts_blueprint(get_service) -> Blueprint:
 
     @bp.post("/alerts/evaluate")
     def evaluate():
-        if not current_app.config["PRICE_SOURCE_CONFIGURED"]:
-            flash(
-                "Price checks are unavailable. Ask the app owner to configure Finnhub.",
-                "notice",
-            )
-            return redirect(url_for("alerts.list_rules"))
         service = get_service()
         fired = service.evaluate_all()
-        flash(f"Checked the rules. {len(fired)} fired.", "success")
-        if service.unavailable_tickers:
-            flash(
-                "Some prices were unavailable. Their rules remain active for a later check.",
-                "notice",
-            )
+        message = f"Checked the rules. {len(fired)} fired."
+        waiting = len(service.unavailable_tickers)
+        if waiting:
+            message += f" {waiting} ticker{'s' if waiting > 1 else ''} had no fresh quote yet; those rules stay active."
+        flash(message, "success")
         return redirect(url_for("alerts.list_rules"))
 
     return bp

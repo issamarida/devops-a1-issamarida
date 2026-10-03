@@ -12,22 +12,27 @@ class CachedPriceSource:
         self.ttl_seconds = ttl_seconds
         self.clock = clock
         self.prices = {}  # ticker -> (price, time it was fetched)
+        self.quotes = {}  # ticker -> (Quote, time it was fetched)
         # The poller thread and the request threads share this cache.
         self.lock = threading.Lock()
 
     def get_price(self, ticker: str) -> float:
+        return self.lookup(self.prices, ticker, self.source.get_price)
+
+    def get_quote(self, ticker: str):
+        """The full quote, for sources that have one (FinnhubSource does)."""
+        return self.lookup(self.quotes, ticker, self.source.get_quote)
+
+    def lookup(self, store: dict, ticker: str, fetch):
         with self.lock:
             now = self.clock()
-            if ticker in self.prices:
-                price, fetched_at = self.prices[ticker]
+            if ticker in store:
+                value, fetched_at = store[ticker]
                 if now - fetched_at < self.ttl_seconds:
-                    return price
+                    return value
             # PriceUnavailable passes straight through, so a failure is never stored.
-            price = self.source.get_price(ticker)
-            self.prices = {
-                key: value
-                for key, value in self.prices.items()
-                if self.clock() - value[1] < self.ttl_seconds
-            }
-            self.prices[ticker] = (price, self.clock())
-            return price
+            value = fetch(ticker)
+            for key in [k for k, v in store.items() if self.clock() - v[1] >= self.ttl_seconds]:
+                del store[key]
+            store[ticker] = (value, self.clock())
+            return value

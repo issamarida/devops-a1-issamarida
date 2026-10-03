@@ -32,15 +32,15 @@ The 3 October review exposed a limitation in the original single-user assumption
 
 Figure 1. One process, two business domains. Solid arrows show request/data flow; dotted arrows show wiring or structural interface conformance. Access control and price adapters are supporting components.
 
-The only start command is `python app.py`. It loads environment configuration, calls create_app, starts a daemon poller and runs waitress. Flask debug mode and its reloader are off. create_app is the only module importing multiple business/adaptor areas, and never starts a background thread. The poller is a thread within the same process, not a second service or job runner.
+The only start command is `python app.py`. It loads environment configuration, calls create_app, starts the Finnhub stream and a daemon poller, and runs waitress. Flask debug mode and its reloader are off. create_app is the only module importing multiple business/adaptor areas, and never starts a background thread. The poller and the two stream threads run within the same process; they are not a second service or job runner.
 
 Each domain has routes, a service and a repository. Routes handle forms; services validate and apply business rules; repositories execute parameterised SQL using one short-lived connection per call. The composition root builds both repositories with the authenticated owner ID, so a request cannot choose another owner's data. Authentication code does not import either business domain.
 
-Alerts calls the neutral WatchlistReader and PriceSource protocols in app/ports.py. It never imports watchlist or market. A scoped WatchlistService satisfies WatchlistReader structurally. The shared price source is a cached Finnhub adapter. Finnhub is the only runtime price source; without a key, price checks are paused rather than simulated. The API key is read from the environment and sent in a header, never logged. Invalid quotes become PriceUnavailable.
+Alerts calls the neutral WatchlistReader and PriceSource protocols in app/ports.py. It never imports watchlist or market. A scoped WatchlistService satisfies WatchlistReader structurally. The shared price source, LivePrices, combines two Finnhub feeds. One server-side WebSocket connection streams trades for every watched ticker; a cached REST adapter supplies the quote and previous close when no trade arrived in the last minute. Finnhub is the only price source and no price is ever made up. The REST adapter sends the key in a header. The WebSocket needs it in the connection URL, which is never logged, and a log filter masks it as a second safeguard. Invalid quotes become PriceUnavailable.
 
 To split alerts in Assignment 2, its tables and poller could move together, and WatchlistReader could become an authenticated HTTP client carrying the same owner identity. That would require an identity propagation contract, an endpoint and network-failure handling. The current logical seam reduces coupling; it does not make those distributed-system concerns disappear.
 
-Jinja templates and local CSS provide a responsive interface without a frontend build system or external assets. Summary counts are real database values. Empty states guide the next action, a missing Finnhub key is labelled, and dormant rules are visibly different from active and fired rules.
+Jinja templates, local CSS and one small inline script provide a responsive interface without a frontend build system or external assets. The script polls the same-origin, session-protected /api/quotes endpoint every two seconds and updates prices, the day change and each rule's distance to its threshold. The browser never contacts Finnhub or sees the key; the Content Security Policy restricts scripts to the page nonce and fetch requests to the app itself. I chose polling over pushing to the browser because each open stream would hold one of waitress's few worker threads. Summary counts are real database values. Empty states guide the next action, and dormant rules are visibly different from active and fired rules.
 
 <!-- pagebreak -->
 
@@ -66,7 +66,7 @@ Passwords use salted scrypt hashes. Account names are normalised; passwords are 
 
 SQLite rate-limit reservations are atomic and persist across restarts. Defaults allow five login attempts per username and 25 per source IP in 15 minutes, plus five registrations per IP. An authenticated account has 60 writes per minute and four manual evaluations per minute. Blocked requests return 429 with Retry-After. Forwarding headers are not trusted, preventing a client from supplying a different rate-limit identity.
 
-The operating envelope is intentionally small: up to 50 accounts, 30 assets per account and 100 retained rules per account by default. These limits are configurable and are not a concurrency benchmark. Live mode has a shared 30-request rolling minute budget and a 30-second cache. Keep active distinct tickers within that budget for a useful polling cadence. API latency, unavailable quotes and budget exhaustion can delay checks; the app does not promise real-time notification.
+The operating envelope is intentionally small: up to 50 accounts, 30 assets per account and 100 retained rules per account by default. These limits are configurable and are not a concurrency benchmark. Streamed trades cost no REST requests, so during market hours the shared 30-request rolling minute budget and 30-second cache mainly cover new tickers, previous closes and closed markets. Up to 50 tickers stream at once, the free Finnhub limit. Alerts are checked every 15 seconds by default, so a crossing trade fires a rule within one interval; fired alerts appear in the app, not as push notifications.
 
 ### Verified scenarios
 
@@ -76,15 +76,15 @@ The operating envelope is intentionally small: up to 50 accounts, 30 assets per 
 - Password hashes, generic login errors, CSRF rejection, expiry, logout revocation, repeat-login invalidation and persistent/concurrent throttling are tested.
 - Old database rows survive two startup upgrades. Storage quotas, quote budgets and the latest-100-event display are exercised. Full history remains stored.
 
-The command is `pytest --cov=app --cov-report=term-missing`. On 3 October, 171 tests passed with 100% statement coverage over 562 measured statements. Coverage includes access control and excludes only domain routes and the composition root. Tests mock public API calls and use temporary SQLite files. A contract test launches the actual waitress entry point and checks readiness within five seconds. Browser verification exercised registration, login, asset creation and alert firing at 1440, 1024, 768 and 390 pixels with no page errors or page-wide overflow.
+The command is `pytest --cov=app --cov-report=term-missing`. On 3 October, 221 tests passed with 100% statement coverage over 771 measured statements. The WebSocket is faked in tests: subscribe and unsubscribe diffs, malformed messages, reconnect backoff and key redaction are covered. Coverage includes access control and excludes only domain routes and the composition root. Tests mock public API calls and use temporary SQLite files. A contract test launches the actual waitress entry point and checks readiness within five seconds. Browser verification exercised registration, login, asset creation and alert firing at 1440, 1024, 768 and 390 pixels with no page errors or page-wide overflow.
 
-Known limits remain: real Finnhub compatibility is not tested against the network; there is no MFA or password recovery; the UI shows the latest 100 events without a history export tool. Code coverage cannot establish complete security or every possible race. HTTPS, secure cookies and deployment access controls are prerequisites for any later public use.
+Known limits remain: automated tests never touch the network, so real Finnhub compatibility rests on a manual check (the stream reached Finnhub and handled a rejected key) and on a local server speaking Finnhub's protocol; there is no MFA or password recovery; the UI shows the latest 100 events without a history export tool. Code coverage cannot establish complete security or every possible race. HTTPS, secure cookies and deployment access controls are prerequisites for any later public use.
 
 <!-- pagebreak -->
 
 ## 5. Deployment contract, evidence and disclosure
 
-The application meets the Assignment 1 runtime shape: one process started by python app.py, HOST defaulting to 0.0.0.0, PORT defaulting to 8080, no interactive server setup, one configurable SQLite path, and no required external service at startup; price checks need a Finnhub key. requirements.txt is the sole manifest, with six direct dependencies. There is no Dockerfile, Compose configuration, authored CI workflow, IaC or public deployment.
+The application meets the Assignment 1 runtime shape: one process started by python app.py, HOST defaulting to 0.0.0.0, PORT defaulting to 8080, no interactive server setup, one configurable SQLite path, and no required external service at startup; prices need a Finnhub key. requirements.txt is the sole manifest, with seven direct dependencies. There is no Dockerfile, Compose configuration, authored CI workflow, IaC or public deployment.
 
 Configuration uses optional environment variables, including polling, caching, authentication limits and storage capacities. The app does not require a .env file. The public /health endpoint reads the three business tables and two access-control tables, returning a generic 503 if a read fails. Logs go to stdout. Readiness is tested from a previously nonexistent data directory.
 
@@ -100,12 +100,13 @@ AI_USAGE.md still contains seven unfinished personal-explanation cells. They mus
 
 ### AI disclosure
 
-I acknowledge the use of Claude and Claude Code to plan and generate the initial application, tests and documentation, and Codex to review the brief, implement the private-account revision, expand safety tests, redesign the interface and revise the report and diagrams. The prompts used include building separate watchlist and alerts domains, checking the submission against the assignment, and improving the frontend and login within one process and two domains. The output of these prompts was used to create and revise the implementation and its supporting material. The personal comprehension explanations remain the author's responsibility.
+I acknowledge the use of Claude and Claude Code to plan and generate the initial application, tests and documentation, and Codex to review the brief, implement the private-account revision, expand safety tests, redesign the interface and revise the report and diagrams. The prompts used include building separate watchlist and alerts domains, checking the submission against the assignment, improving the frontend and login within one process and two domains, and replacing simulated prices with live Finnhub data streamed over a server-side WebSocket. The output of these prompts was used to create and revise the implementation and its supporting material. The personal comprehension explanations remain the author's responsibility.
 
 ### Technical references
 
 - Flask, Security Considerations: https://flask.palletsprojects.com/en/stable/web-security/
 - Werkzeug, Security Helpers: https://werkzeug.palletsprojects.com/en/stable/utils/#module-werkzeug.security
 - OWASP, Authentication Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+- Finnhub, WebSocket Trades and Quote API: https://finnhub.io/docs/api/websocket-trades
 
-These references informed the access-control review; they are not a security certification of this application.
+These references informed the access-control review and the price feed; they are not a security certification of this application.

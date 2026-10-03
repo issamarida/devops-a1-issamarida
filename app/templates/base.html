@@ -87,6 +87,20 @@
     .message.error { color:#922a34; background:#fff0f1; border-color:#f2d4d8; }
     .message.success { color:#176749; background:#e7f5ed; border-color:#cbe8d8; }
     .message.notice { color:#775519; background:#fff6e3; border-color:#efdfba; }
+    .live { display:inline-flex; align-items:center; gap:8px; border:1px solid var(--line); background:#fff; border-radius:999px; padding:5px 12px 5px 10px; font-size:11px; font-weight:650; color:var(--muted); white-space:nowrap; }
+    .live-dot { width:8px; height:8px; border-radius:50%; background:#a3adbb; flex-shrink:0; }
+    .live[data-state="live"] { color:#176749; border-color:#cbe8d8; }
+    .live[data-state="live"] .live-dot { background:#1f9d68; animation:pulse 1.8s ease-out infinite; }
+    .live[data-state="connecting"] .live-dot { background:#d79b2b; }
+    .live-time { color:var(--muted); font-weight:500; font-variant-numeric:tabular-nums; }
+    @keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(31,157,104,.5); } 100% { box-shadow:0 0 0 8px rgba(31,157,104,0); } }
+    .price { font-weight:700; color:var(--ink); font-size:13px; white-space:nowrap; border-radius:4px; padding:2px 4px; margin:-2px -4px; transition:background-color .9s ease; }
+    .price.tick-up { background:#d8f3e5; transition:none; }
+    .price.tick-down { background:#fbe0e3; transition:none; }
+    .src { display:block; font-size:10px; color:var(--muted); font-weight:500; }
+    .move { white-space:nowrap; font-weight:650; }
+    .move.up { color:#17784f; }
+    .move.down { color:#b0303c; }
     .footer { display:flex; justify-content:space-between; gap:12px; padding:24px 0 0; font-size:11px; color:var(--muted); }
     .auth-shell { min-height:100vh; display:grid; grid-template-columns:1fr 1fr; max-width:1200px; margin:auto; align-items:center; gap:80px; padding:50px; }
     .auth-intro h1 { font-size:clamp(32px,4vw,48px); margin:30px 0 18px; }
@@ -98,9 +112,10 @@
     .auth-card form { margin-top:24px; }
     .auth-footer { text-align:center; margin-top:22px; font-size:12px; }
     .auth-main { padding:0; margin:0; }
+    @media(prefers-reduced-motion:reduce) { .live-dot,.price { animation:none !important; transition:none !important; } }
     @media(min-width:1500px) { .layout { grid-template-columns:minmax(0,1fr) 340px; } }
     @media(max-width:1100px) { .sidebar { width:190px; padding:24px 14px; } main { margin-left:190px; padding:25px 22px; } .layout { grid-template-columns:minmax(0,1fr); } .layout>aside { display:grid; grid-template-columns:1fr 1fr; gap:20px; } }
-    @media(max-width:700px) { .sidebar { position:static; width:auto; padding:14px 18px; display:block; } .sidebar .brand small,.nav-label,.mode-card { display:none; } .sidebar nav { display:flex; margin-top:14px; gap:10px; } .nav-link { margin:0; padding:8px 14px; flex:1; } .sidebar-bottom { padding:0; } .account { margin:12px 0 0; padding-top:12px; } main { margin:0; padding:22px 16px; } .topline { margin-bottom:18px; } .stats { gap:8px; } .stat { padding:12px; } .stat small { display:none; } .stat-value { font-size:24px; } .layout>aside { grid-template-columns:1fr; } .heading { align-items:flex-start; flex-direction:column; gap:12px; } .auth-shell { grid-template-columns:1fr; gap:26px; padding:26px 18px; } .auth-intro h1 { font-size:28px; margin:20px 0 12px; } .auth-card { padding:24px; } .footer { flex-direction:column; } }
+    @media(max-width:700px) { .sidebar { position:static; width:auto; padding:14px 18px; display:block; } .sidebar .brand small,.nav-label,.mode-card { display:none; } .sidebar nav { display:flex; margin-top:14px; gap:10px; } .nav-link { margin:0; padding:8px 14px; flex:1; } .sidebar-bottom { padding:0; } .account { margin:12px 0 0; padding-top:12px; } main { margin:0; padding:22px 16px; } .topline { margin-bottom:18px; } .stats { gap:8px; } .stat { padding:12px; } .stat small { display:none; } .stat-value { font-size:24px; } .layout>aside { grid-template-columns:1fr; } .heading { align-items:flex-start; flex-direction:column; gap:12px; } .auth-shell { grid-template-columns:1fr; gap:26px; padding:26px 18px; } .auth-intro h1 { font-size:28px; margin:20px 0 12px; } .auth-card { padding:24px; } .footer { flex-direction:column; } .hide-sm { display:none; } }
   </style>
 </head>
 <body>
@@ -114,18 +129,112 @@
     <a class="nav-link {{ 'current' if request.blueprint == 'alerts' }}" href="{{ url_for('alerts.list_rules') }}" {% if request.blueprint == 'alerts' %}aria-current="page"{% endif %}><span class="nav-icon" aria-hidden="true">◎</span> Price alerts</a>
   </nav>
   <div class="sidebar-bottom">
-    <div class="mode-card"><strong>{{ 'Finnhub prices' if prices_configured else 'Price feed unavailable' }}</strong>{{ 'Quotes may be delayed or unavailable. Alerts are checked periodically.' if prices_configured else 'Price checks are paused until the app owner configures Finnhub.' }}</div>
+    <div class="mode-card"><strong>Live market data</strong>Trades stream from Finnhub through this server. Alerts are checked every {{ poll_interval }} seconds.</div>
     <div class="account"><span class="avatar" aria-hidden="true">{{ g.user.username[0]|upper }}</span><span class="account-name">{{ g.user.username }}<br>Private account</span><form class="inline" method="post" action="{{ url_for('sign_out') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="link" type="submit">Sign out</button></form></div>
   </div>
 </aside>
 {% endif %}
 <main id="content" {% if not g.user %}class="auth-main"{% endif %}>
   <div class="{{ 'workspace' if g.user else '' }}">
-  {% if g.user %}<div class="topline"><span>Workspace / {% if request.blueprint == 'alerts' %}Price alerts{% else %}Watchlist{% endif %}</span><span class="badge">{{ 'Finnhub configured' if prices_configured else 'Finnhub not configured' }}</span></div>{% endif %}
+  {% if g.user %}<div class="topline"><span>Workspace / {% if request.blueprint == 'alerts' %}Price alerts{% else %}Watchlist{% endif %}</span><span class="live" data-live data-state="connecting" role="status" aria-live="polite"><span class="live-dot" aria-hidden="true"></span><span data-live-label>Connecting</span><span class="live-time" data-live-time></span></span></div>{% endif %}
   {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="message {{ category }}" role="status">{{ message }}</div>{% endfor %}{% endwith %}
   {% block content %}{% endblock %}
   {% if g.user %}<footer class="footer"><span>Private to your account · All times UTC</span><span>Monitoring only. No trades or investment advice.</span></footer>{% endif %}
   </div>
 </main>
+{% if g.user %}
+<script nonce="{{ g.csp_nonce }}">
+// Polls this server for prices. The browser never talks to Finnhub and never sees the key.
+(() => {
+  const pill = document.querySelector("[data-live]");
+  if (!pill) return;
+  const label = pill.querySelector("[data-live-label]");
+  const time = pill.querySelector("[data-live-time]");
+  const money = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const clock = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" });
+  const labels = { live: "Live", connecting: "Connecting", offline: "Offline" };
+  const last = {};
+  const FAST = 2000;
+  let delay = FAST, timer = null, busy = false;
+
+  const signed = (value, digits) => (value > 0 ? "+" : value < 0 ? "−" : "") + Math.abs(value).toFixed(digits);
+
+  function setStatus(state, at) {
+    pill.dataset.state = state;
+    label.textContent = labels[state] || "Connecting";
+    time.textContent = at ? clock.format(new Date(at * 1000)) + " UTC" : "";
+  }
+
+  function render(body) {
+    for (const cell of document.querySelectorAll("[data-quote]")) {
+      const ticker = cell.dataset.quote;
+      const quote = body.quotes[ticker];
+      const field = cell.dataset.field;
+      if (!quote) { cell.textContent = "—"; continue; }
+      if (field === "price") {
+        const value = cell.querySelector(".price") || cell.appendChild(Object.assign(document.createElement("span"), { className: "price" }));
+        const source = cell.querySelector(".src") || cell.appendChild(Object.assign(document.createElement("span"), { className: "src" }));
+        if (cell.firstChild && cell.firstChild.nodeType === Node.TEXT_NODE) cell.firstChild.remove();
+        const before = last[ticker];
+        value.textContent = money.format(quote.price);
+        source.textContent = (quote.source === "live" ? "Trade " : "Quote ") + clock.format(new Date(quote.at * 1000));
+        if (before !== undefined && before !== quote.price) {
+          value.classList.remove("tick-up", "tick-down");
+          void value.offsetWidth;  // restart the flash
+          value.classList.add(quote.price > before ? "tick-up" : "tick-down");
+          setTimeout(() => value.classList.remove("tick-up", "tick-down"), 350);
+        }
+      } else if (field === "change") {
+        cell.className = "move";
+        if (quote.change === null) { cell.textContent = "—"; continue; }
+        cell.textContent = signed(quote.change, 2) + " (" + signed(quote.percent, 2) + "%)";
+        cell.classList.add(quote.change > 0 ? "up" : quote.change < 0 ? "down" : "flat");
+      } else if (field === "distance") {
+        // Same strict comparison as is_triggered: an equal price does not fire.
+        const threshold = Number(cell.dataset.threshold);
+        const above = cell.dataset.condition === "above";
+        const met = above ? quote.price > threshold : quote.price < threshold;
+        const gap = Math.abs(threshold - quote.price) / quote.price * 100;
+        cell.textContent = met ? "Met, fires on next check" : (above ? "▲ " : "▼ ") + gap.toFixed(2) + "% " + (above ? "rise" : "fall");
+      }
+    }
+    for (const cell of document.querySelectorAll("[data-quote][data-field='price']")) {
+      const quote = body.quotes[cell.dataset.quote];
+      if (quote) last[cell.dataset.quote] = quote.price;
+    }
+    setStatus(body.status, body.server_time);
+  }
+
+  async function tick() {
+    if (busy) return;
+    busy = true;
+    try {
+      const response = await fetch("{{ url_for('market.quotes') }}", {
+        headers: { Accept: "application/json" }, credentials: "same-origin", cache: "no-store",
+      });
+      if (response.status === 401) { window.location.assign("{{ url_for('sign_in') }}"); return; }
+      if (!response.ok) throw new Error(String(response.status));
+      render(await response.json());
+      delay = FAST;
+    } catch (error) {
+      setStatus("connecting");
+      delay = Math.min(delay * 2, 30000);
+    } finally {
+      busy = false;
+    }
+    schedule();
+  }
+
+  function schedule() {
+    clearTimeout(timer);
+    if (!document.hidden) timer = setTimeout(tick, delay);
+  }
+
+  // A hidden tab stops polling and catches up the moment it is shown again.
+  document.addEventListener("visibilitychange", () => (document.hidden ? clearTimeout(timer) : tick()));
+  tick();
+})();
+</script>
+{% endif %}
 </body>
 </html>

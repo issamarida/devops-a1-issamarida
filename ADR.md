@@ -16,6 +16,8 @@ Consequences: There's less framework to explain at the check. I write the SQL an
 
 Revision recorded on 2026-10-03: I kept Jinja and local CSS because the two form-based pages do not justify a JavaScript build system. I use one daemon thread for periodic checks because it fits the single-process contract; it starts only in app.py. The thread waits after each run, so slow API calls extend the checking interval.
 
+Revision recorded on 2026-10-03, live prices: Users wanted prices that move while they watch, from the real market. I added one WebSocket connection from the server to Finnhub, run by two daemon threads that app.py starts, with websocket-client as the one new dependency. The pages poll a session-protected /api/quotes endpoint every two seconds, so the browser never sees the key. I rejected the official finnhub-python SDK because it only covers REST and puts the key in the URL. I rejected letting the browser connect to Finnhub directly because the key would be in the page. I rejected pushing to the browser with server-sent events because each open stream would hold one of waitress's few worker threads. The cost is up to two seconds of display delay and two more threads to explain.
+
 ## 2. Keeping the watchlist and alerts domains separate
 
 Date: 2026-09-29

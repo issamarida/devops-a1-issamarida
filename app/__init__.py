@@ -17,9 +17,11 @@ from app.config import Config
 from app.db import get_connection, init_db
 from app.market.cache import CachedPriceSource
 from app.market.finnhub import FinnhubSource
+from app.market.routes import create_market_blueprint
+from app.market.stream import FinnhubStream, LivePrices
 from app.security import install_access
 from app.watchlist import SCHEMA_PATH as WATCHLIST_SCHEMA
-from app.watchlist.repository import WatchlistRepository
+from app.watchlist.repository import WatchlistRepository, most_watched_tickers
 from app.watchlist.routes import create_watchlist_blueprint
 from app.watchlist.service import WatchlistService
 
@@ -40,24 +42,26 @@ def create_app(config: Config, *, price_source=None) -> Flask:
 
     access = install_access(app, config)
 
-    # Tests inject an offline fake. Finnhub is the only runtime price source.
-    app.config["PRICE_SOURCE_CONFIGURED"] = price_source is not None or bool(
-        config.price_api_key
-    )
+    # Tests inject an offline fake. At runtime every price comes from Finnhub:
+    # streamed trades first, the REST quote when no recent trade exists.
     if price_source is None:
-        price_source = CachedPriceSource(
-            FinnhubSource(
-                config.price_api_key,
-                requests_per_minute=config.quote_requests_per_minute,
-            ),
-            config.price_cache_ttl_seconds,
+        stream = FinnhubStream(
+            config.price_api_key,
+            lambda: most_watched_tickers(config.db_path),
+            max_symbols=config.live_symbol_limit,
         )
-        if config.price_api_key:
-            logger.info("Price source: Finnhub")
-        else:
-            logger.warning(
-                "Finnhub is not configured; set PRICE_API_KEY to enable price checks"
-            )
+        price_source = LivePrices(
+            stream,
+            CachedPriceSource(
+                FinnhubSource(
+                    config.price_api_key,
+                    requests_per_minute=config.quote_requests_per_minute,
+                ),
+                config.price_cache_ttl_seconds,
+            ),
+        )
+    # app.py starts this. create_app never opens a connection.
+    app.extensions["price_stream"] = getattr(price_source, "stream", None)
 
     def watchlist_for(owner_id):
         return WatchlistService(
@@ -75,6 +79,12 @@ def create_app(config: Config, *, price_source=None) -> Flask:
         create_watchlist_blueprint(lambda: watchlist_for(g.user["id"]))
     )
     app.register_blueprint(create_alerts_blueprint(lambda: alerts_for(g.user["id"])))
+    app.register_blueprint(
+        create_market_blueprint(
+            lambda: [item.ticker for item in watchlist_for(g.user["id"]).list_items()],
+            price_source,
+        )
+    )
 
     class AllAccounts:
         def evaluate_all(self):
@@ -103,7 +113,6 @@ def create_app(config: Config, *, price_source=None) -> Flask:
             "active_count": sum(rule["status"] == "active" for rule in rules),
             "dormant_count": sum(rule["status"] == "dormant" for rule in rules),
             "event_count": alerts.count_events(),
-            "prices_configured": app.config["PRICE_SOURCE_CONFIGURED"],
             "poll_interval": config.poll_interval_seconds,
         }
 

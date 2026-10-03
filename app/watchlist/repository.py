@@ -77,3 +77,13 @@ class WatchlistRepository:
 
     def exists(self, ticker) -> bool:
         return self.get_by_ticker(ticker) is not None
+
+
+def most_watched_tickers(db_path) -> list[str]:
+    """Every ticker an account watches, most watched first. Owner 0 is legacy data nobody sees."""
+    with closing(get_connection(db_path)) as conn:
+        rows = conn.execute(
+            """SELECT ticker FROM watchlist_items WHERE owner_id != 0
+            GROUP BY ticker ORDER BY COUNT(*) DESC, ticker"""
+        ).fetchall()
+    return [row["ticker"] for row in rows]
