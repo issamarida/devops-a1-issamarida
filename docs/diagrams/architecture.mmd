@@ -1,44 +1,52 @@
 flowchart TB
-    browser["Investor's browser"]
-    subgraph process["One process: python app.py / waitress"]
-        root["create_app<br/>Composition root"]
-        access["Access control<br/>Login / CSRF / limits"]
-        watch["WATCHLIST<br/>Routes / Service<br/>Repository"]
-        alert["ALERTS<br/>Routes / Service<br/>Repository"]
-        reader["WatchlistReader<br/>Same owner"]
-        price["LivePrices<br/>PriceSource + snapshot"]
-        quotes["/api/quotes, search, details<br/>Signed-in, own tickers only"]
-        info["MarketInfo<br/>Market status / search / details<br/>Cached"]
-        stream["Finnhub stream<br/>Daemon threads, app.py"]
-        rest["Cached REST quotes<br/>Key in header"]
-        poller["Daemon poller<br/>Started only by app.py"]
+    browser["Investor's browser<br/>Jinja pages + inline script"]
+    subgraph process["One process: python app.py (waitress)"]
+        access["security.py: sessions, CSRF and rate limits on every request"]
+        root["create_app: composition root, wires owner-scoped services"]
+        poller["Alert poller thread<br/>every 5 s, all accounts"]
+        subgraph watchlist["WATCHLIST domain"]
+            direction TB
+            wroutes["Routes"] --> wservice["WatchlistService"] --> wrepo["WatchlistRepository"]
+        end
+        subgraph alerts["ALERTS domain"]
+            direction TB
+            aroutes["Routes"] --> aservice["AlertService<br/>evaluate_all"] --> arepo["AlertRepository<br/>fire_rule: one transaction"]
+        end
+        subgraph ports["app/ports.py"]
+            direction LR
+            reader["WatchlistReader"]
+            pricesrc["PriceSource"]
+        end
+        subgraph market["app/market"]
+            direction TB
+            api["JSON API<br/>quotes, search, details"]
+            live["LivePrices<br/>live trade, else quote"]
+            info["MarketInfo<br/>status, search, details"]
+            stream["FinnhubStream<br/>2 daemon threads"]
+            rest["CachedPriceSource + FinnhubSource<br/>key in header, shared budget"]
+        end
     end
-    db[("SQLite<br/>DATA_DIR/app.db")]
-    api["Finnhub REST API"]
-    ws["Finnhub WebSocket"]
-    browser --> access
-    browser -. polls .-> quotes
-    root -. wires .-> access
-    root -. scopes .-> watch
-    root -. scopes .-> alert
-    access --> watch
-    access --> alert
-    poller --> alert
-    alert --> reader
-    watch -. satisfies .-> reader
-    alert --> price
-    quotes --> price
-    price --> stream
-    price --> rest
-    stream --> ws
-    stream -. watched tickers .-> watch
-    rest --> api
-    quotes --> info
-    info --> api
-    watch --> db
-    alert --> db
-    access --> db
+    db[("SQLite: DATA_DIR/app.db")]
+    fws["Finnhub WebSocket"]
+    frest["Finnhub REST API"]
+
+    browser -- "pages, forms, polling" --> access
+    access --> wroutes & aroutes & api
+    root -. "wires" .-> watchlist & alerts & market
+    poller --> aservice
+    aservice --> reader & pricesrc
+    wservice -. "satisfies" .-> reader
+    live -. "satisfies" .-> pricesrc
+    api --> live & info
+    live --> stream & rest
+    info --> rest
+    stream --> fws
+    rest --> frest
+    wrepo & arepo & access --> db
+
+    classDef domain fill:#e9f3ee,stroke:#4c8c6b,color:#182337
     classDef support fill:#eef2fa,stroke:#7b90b3,color:#182337
-    classDef feature fill:#e9f3ee,stroke:#4c8c6b,color:#182337
-    class root,access,reader,poller,price,quotes,info,stream,rest support
-    class watch,alert feature
+    classDef ext fill:#ffffff,stroke:#59677a,color:#182337
+    class wroutes,wservice,wrepo,aroutes,aservice,arepo domain
+    class access,root,reader,pricesrc,api,live,stream,rest,info,poller support
+    class browser,db,fws,frest ext
