@@ -1,112 +1,107 @@
 # Stock watchlist and price alerts
 
-Assignment 1 | Issam Arida | Revised 3 October 2026
+Assignment 1 report | Issam Arida | 4 October 2026
 
-## 1. Audience, scope and development process
+## 1. What I built and who it is for
 
-The intended users are independent retail investors who follow a small set of US stocks, usually around a job or studies. They use a browser on a desktop or phone to record what they follow, set a price condition and later review which conditions were met. The stakeholder is the investor, not GitHub or a cloud provider. The app is a monitoring aid, not a brokerage or an investment recommendation service.
+I built a small web app for people who invest a bit of their own money in US stocks. They usually have a job or are studying, so they can't sit and watch a chart all day. They want a list of the stocks they follow with a note on why, and they want to know when a price crosses a level they care about.
 
-The two business domains are watchlist and alerts. Watchlist owns tickers, names and notes. Alerts owns above/below threshold rules and their trigger history. Both read and write SQLite. Separate private accounts are needed because users should not see or change each other's notes or rules. Login is supporting access control around these two domains. The initial setting is a local course demonstration or a small controlled pilot; there is no public Assignment 1 deployment.
+I pictured a small pilot of up to 50 investors on one server, each with up to 30 stocks and 100 alert rules. Those numbers became the default limits in the code. Each person gets a private account because I didn't want one user reading or changing another user's notes.
 
-### SDLC choice and SMART goals
+The app has two feature domains. The watchlist holds the stocks you follow with a name and a note. Alerts holds one-shot price rules ("tell me when AAPL goes above 200") plus a history of every rule that fired. Both domains read and write SQLite. Prices come from Finnhub, a public market data API. Login is support code around the two domains and I don't count it as a third domain.
 
-I used iterative and incremental development: scaffold, watchlist, alerts, adapters, testing and documentation, followed by a scope and usability review. Small slices gave me working behaviour before the whole design was settled. Waterfall would make a late domain-separation change costly; a full Scrum process would add team ceremonies to an individual project.
+Everything runs as one Python process with one SQLite file under `DATA_DIR`. Inside that process a background thread checks the alert rules every 5 seconds, and two more threads keep a live WebSocket connection to Finnhub open.
 
-- Complete SQLite-backed behaviour in both domains by 1 October. The original two domains were in place on 30 September.
-- Reach at least 70% measured core-logic coverage by 1 October. The initial suite reached 100% on its defined scope.
-- Verify a fresh start with `python app.py` and an empty DATA_DIR within five seconds by 2 October. The contract test exercises that path.
-- Record five ADRs across at least three actual commit dates by 2 October. Entries were introduced on 28 September, 30 September and 1 October.
-- Review audience, ownership, error cases and responsive layouts on 3 October, then run the complete test suite before integration.
+## 2. How I worked: SDLC and SMART goals
 
-### What happened in practice
+I used an iterative and incremental model. I built the app in thin working slices: first the scaffold and the deployment contract, then the watchlist, then alerts, then the price adapters and the poller, then tests and docs. Every slice ran end to end before I started the next one. I picked this because I had about a week and one person. Waterfall would have locked my domain split in on day one, and I changed my mind about it more than once. Scrum is built for teams with sprints and standups, which is a lot of ceremony for a solo project.
 
-The repository began on 23 September, but most implementation started on 28 September. That gap compressed the work. Three early implementation commits landed minutes apart. On 29 September I simplified the package to app/ before adding alerts. Ten commits landed on 30 September, followed by testing and reporting on 1 October and visual changes on 2 October. This was incremental delivery, but unevenly paced.
+My SMART goals and what actually happened:
 
-The 3 October review exposed a limitation in the original single-user assumption, a stale-rule race and unfinished process evidence. It added private ownership and login, fixed the race, improved the interface and expanded tests. These changes are dated revisions in the existing five ADRs, not backdated new decisions. The intended integration flow is feature branches into develop, then a tested release into main. Local commit dates alone cannot establish the remote push cadence required by the brief.
+- **Both domains working on SQLite by 1 October.** Done early. Watchlist landed on 28 September and alerts on 30 September.
+- **At least 70% coverage on core logic by 1 October.** Done. The first measured run was already at 100% of the scope I defined in `.coveragerc`.
+- **A fresh clone starts with `python app.py` and an empty `DATA_DIR` in under five seconds, by 2 October.** Done. A contract test starts the real entry point on a random port and waits for `/health` to return 200.
+- **Five ADR entries across at least three commit dates by 2 October.** Done. The entries landed on 28 September, 30 September and 1 October.
 
-<!-- pagebreak -->
+Where I didn't follow the plan well was pacing. I created the repo on 23 September but only started real work on 28 September, so the week got squeezed. Ten commits landed on 30 September alone. A few of my early commit messages are lazy ("update", "rcorrected", "init") and I know those don't count as meaningful under the brief.
 
-## 2. Architecture and the modularisation seam
+The plan also changed late, which is what an iterative model is meant to handle. On 3 October I reviewed the app against my own audience and realised one shared anonymous watchlist made no sense for real investors. I added private accounts and fixed a race where a deleted rule could fire its replacement. On the same day I dropped the fake demo prices and moved to real Finnhub data. On 4 October I turned the watchlist page into a live dashboard. I recorded each of these as a dated revision inside the existing ADRs instead of adding new entries, because the brief asks for exactly five.
+
+In total there are 31 commits over 8 calendar days. The busiest day has 10 commits, which is 32% of the total and under the 40% limit. I used `feature/*` branches merged into `develop` and then `main` for the bigger changes.
+
+## 3. Architecture
 
 ![Architecture overview](diagrams/architecture.png)
 
-Figure 1. One process, two business domains. Solid arrows show request/data flow; dotted arrows show wiring or structural interface conformance. Access control and price adapters are supporting components.
+Figure 1. The whole app runs in one process. Green boxes are the two feature domains. Solid arrows show calls and data, dotted arrows show wiring.
 
-The only start command is `python app.py`. It loads environment configuration, calls create_app, starts the Finnhub stream and a daemon poller, and runs waitress. Flask debug mode and its reloader are off. create_app is the only module importing multiple business/adaptor areas, and never starts a background thread. The poller and the two stream threads run within the same process; they are not a second service or job runner.
+`python app.py` is the only start command. It reads settings from environment variables, calls `create_app`, starts the Finnhub stream and the alert poller, then hands the app to waitress on `HOST:PORT`. `create_app` builds everything and never starts a thread, so tests can build the app without touching the network.
 
-Each domain has routes, a service and a repository. Routes handle forms; services validate and apply business rules; repositories execute parameterised SQL using one short-lived connection per call. The composition root builds both repositories with the authenticated owner ID, so a request cannot choose another owner's data. Authentication code does not import either business domain.
+Both domains use the same layout. Routes read the form and call the service. The service checks the input and applies the rules. The repository runs plain SQL with one short-lived connection per call, so threads never share a connection.
 
-Alerts calls the neutral WatchlistReader and PriceSource protocols in app/ports.py. It never imports watchlist or market. A scoped WatchlistService satisfies WatchlistReader structurally. The shared price source, LivePrices, combines two Finnhub feeds. One server-side WebSocket connection streams trades for every watched ticker; a cached REST adapter supplies the quote and previous close when no trade arrived in the last minute. Finnhub is the only price source and no price is ever made up. The REST adapter sends the key in a header. The WebSocket needs it in the connection URL, which is never logged, and a log filter masks it as a second safeguard. Invalid quotes become PriceUnavailable.
+The seam between the domains is `app/ports.py`. Alerts needs two answers from outside: is this ticker on the user's watchlist, and what does it cost right now. Those are two small interfaces, `WatchlistReader` and `PriceSource`. Alerts imports only those and never imports the watchlist or market code. `create_app` is the only file that plugs the real classes in. A test reads every import under `app/` and fails the build if anyone breaks that rule.
 
-To split alerts in Assignment 2, its tables and poller could move together, and WatchlistReader could become an authenticated HTTP client carrying the same owner identity. That would require an identity propagation contract, an endpoint and network-failure handling. The current logical seam reduces coupling; it does not make those distributed-system concerns disappear.
+That is where I'd cut the app into services in Assignment 2. Alerts would take its two tables and the poller with it, and `WatchlistReader` would become a small HTTP client that calls the watchlist service. I'd still have to pass the user's identity across and handle the network failing. The seam only takes care of the code side.
 
-Jinja templates, local CSS and one small inline script provide a responsive interface without a frontend build system or external assets. The script polls the same-origin, session-protected /api/quotes endpoint every second and updates prices, the day change, a sparkline of streamed trades, the day and 52 week ranges, the US market session and each rule's distance to its threshold. A new alert event appears as an on-screen notice. The browser never contacts Finnhub or sees the key; the Content Security Policy restricts scripts to the page nonce and fetch requests to the app itself. I chose polling over pushing to the browser because each open stream would hold one of waitress's few worker threads. Summary counts are real database values. Empty states guide the next action, and dormant rules are visibly different from active and fired rules.
+Prices come from Finnhub in two ways. One WebSocket connection from the server streams live trades for every ticker that any user watches. When there's no recent trade, for example at the weekend, a cached REST call returns the latest quote. The browser never talks to Finnhub and never sees the API key. The pages ask this server for prices once a second at `/api/quotes`, which only returns the signed-in user's own tickers.
 
-<!-- pagebreak -->
+The dashboard shows each stock's live price, today's change, a 20-minute trend line built from streamed trades, the day range and the 52-week range. Finnhub's price history endpoint is paid only, so I draw the trend from the trades the server already receives. When the poller fires a rule, the page shows a notice within a second. I used Jinja templates with one inline script and no frontend build, because two pages don't need React.
 
-## 3. SQLite model and consistency
+## 4. Database
 
 ![Database schema](diagrams/schema.png)
 
-Figure 2. All five tables in DATA_DIR/app.db. The dashed watchlist relationship is logical, not a foreign key. An alert event's rule reference may be NULL. Accounts and rate_limits are access-control storage, not additional business domains.
+Figure 2. The five tables in `DATA_DIR/app.db`. The dotted line between watchlist and alert rules is a link by ticker text only, with no foreign key.
 
-Watchlist ticker uniqueness is composite: UNIQUE(owner_id, ticker). Domain owner IDs are plain integers with no account foreign key or cross-domain join. Fields other than alert_events.rule_id and accounts.session_hash are populated and non-null in normal writes; integer primary keys identify rows. Notes default to an empty string. Domain owner IDs default to reserved owner 0 for legacy data. Accounts use unique usernames.
+The watchlist owns `watchlist_items`. Alerts owns `alert_rules` and `alert_events`. The other two tables, `accounts` and `rate_limits`, belong to login and throttling.
 
-alert_rules constrains condition to above/below and threshold to a positive number. The service also rejects non-finite thresholds and quotes. is_active starts at 1. fire_rule takes a SQLite write lock, checks owner, active status and the random rule_token, then deactivates the rule and inserts its event in one transaction. Rollback preserves the active rule if the insert fails. The token prevents an evaluation of a deleted rule from acting on a replacement with a reused numeric ID.
+The decision I care about most (ADR-3) is how the two domains relate. `alert_rules.ticker` is plain text with no foreign key to `watchlist_items`, and no query ever joins across the two domains. If alerts moves to its own service with its own database later, nothing in its schema points at a table it can't reach. The cost is that a rule can outlive its stock. If you remove AAPL from your watchlist, its rules stay in the table as dormant and come back to life when you add AAPL again.
 
-Events copy the ticker, condition, threshold, observed price and UTC time. Deleting a rule uses ON DELETE SET NULL, keeping its history readable. The schema permits multiple referenced events; the one-shot transaction enforces at most one firing through the application. Removing a watched ticker leaves its rules dormant; adding it back resumes them.
+`alert_events` stores a copy of the ticker, condition, threshold, observed price and time when a rule fires. That way the history still reads correctly after you delete the rule, and `rule_id` just becomes NULL. Keeping only a "last fired" column on the rule would have lost the history on delete.
 
-Startup creates missing tables and transactionally upgrades the previous shared schema. Old rows and links are preserved under owner 0, which has no account and is not polled. New registrants cannot claim them. This preserves privacy without requiring a manual startup migration. SQLite stays in its default journal mode.
+Rules are one-shot. `fire_rule` takes a write lock with `BEGIN IMMEDIATE`, switches the rule off and writes the event in one transaction. If two checks run at once, only one of them wins. Each rule also has a random `rule_token`, so a check that started before you deleted a rule can't fire a new rule that reused its ID.
 
-<!-- pagebreak -->
+Every business table has an `owner_id`, and every query filters on the signed-in user's ID. The tables are created at startup with `CREATE TABLE IF NOT EXISTS`, and an older single-user database is upgraded automatically with its rows parked under owner 0, which nobody can log in as. SQLite stays in its default journal mode.
 
-## 4. Safety, edge cases and verification
+## 5. Testing
 
-Passwords use salted scrypt hashes. Account names are normalised; passwords are 15–128 characters and are never stored as plaintext. Login replaces a random session token, while SQLite stores only its digest and absolute expiry. The signed cookie is HttpOnly and SameSite=Lax. Logout revokes the token, and a subsequent login invalidates the previous session. Every POST requires a session-bound CSRF token. Templates escape user content, and security headers restrict scripts, framing and caching.
+Tests target the core logic of both domains: `is_triggered`, `AlertService.evaluate_all`, `fire_rule` and the watchlist validation. They use fake `PriceSource` and `WatchlistReader` classes, so they're fast and never touch the network. Route files and `create_app` are left out of coverage because they're thin glue. One end-to-end test drives the full flow from adding a stock to a fired alert through the Flask test client.
 
-SQLite rate-limit reservations are atomic and persist across restarts. Defaults allow five login attempts per username and 25 per source IP in 15 minutes, plus five registrations per IP. An authenticated account has 60 writes per minute and four manual evaluations per minute. Blocked requests return 429 with Retry-After. Forwarding headers are not trusted, preventing a client from supplying a different rate-limit identity.
+The command is `pytest --cov=app --cov-report=term-missing`. On 4 October, 240 tests passed with 100% statement coverage over 868 statements. Coverage below 70% fails the run.
 
-The operating envelope is intentionally small: up to 50 accounts, 30 assets per account and 100 retained rules per account by default. These limits are configurable and are not a concurrency benchmark. Streamed trades cost no REST requests, so during market hours the shared 50-request rolling minute budget and 30-second cache mainly cover new tickers, previous closes and closed markets. Up to 50 tickers stream at once, the free Finnhub limit. Alerts are checked every 5 seconds by default, so a crossing trade fires a rule within one interval; fired alerts appear in the app, not as push notifications.
+The weak spot is that the fakes would not notice if Finnhub changed its response format. I checked the real API by hand with my own key, and the tests cover malformed answers, but there is no automated test against the live service.
 
-### Verified scenarios
+## 6. Deployment contract and setup
 
-- Independent users can follow the same ticker, but cannot read, delete or trigger each other's records. Forged owner fields do not change request scope.
-- Equality does not trigger. Missing, boolean, non-finite or non-positive prices are skipped. Dormant rules resume only when their own owner's ticker returns.
-- Simultaneous evaluations create one event. Deletion and ID reuse cannot fire a replacement. Event insertion failure rolls back deactivation.
-- Password hashes, generic login errors, CSRF rejection, expiry, logout revocation, repeat-login invalidation and persistent/concurrent throttling are tested.
-- Old database rows survive two startup upgrades. Storage quotas, quote budgets and the latest-100-event display are exercised. Full history remains stored.
+I went through section 7 of the brief point by point:
 
-The command is `pytest --cov=app --cov-report=term-missing`. On 4 October, 240 tests passed with 100% statement coverage over 868 measured statements. The WebSocket is faked in tests: subscribe and unsubscribe diffs, malformed messages, reconnect backoff and key redaction are covered. Coverage includes access control and excludes only domain routes and the composition root. Tests mock public API calls and use temporary SQLite files. A contract test launches the actual waitress entry point and checks readiness within five seconds. Browser verification exercised registration, login, asset creation and alert firing at 1440, 1024, 768 and 390 pixels with no page errors or page-wide overflow.
+- One process, started with `python app.py`.
+- Binds `0.0.0.0` by default and reads the port from `PORT`, default 8080.
+- Nothing interactive at startup. Tables are created automatically.
+- SQLite lives at `$DATA_DIR/app.db`, default `./data/app.db`.
+- The only outside dependency is Finnhub. Without a key the app still starts and shows prices as unavailable.
+- `requirements.txt` is the only manifest, with seven packages. There's no Dockerfile, compose file, CI workflow or IaC.
+- Every setting is an environment variable with a default in code. `app.py` will read a git-ignored `.env` file if one exists, but nothing needs it.
+- The contract test checks that the app is healthy within five seconds of starting.
 
-Known limits remain: automated tests never touch the network, so real Finnhub compatibility rests on a manual check (the stream reached Finnhub and handled a rejected key) and on a local server speaking Finnhub's protocol; there is no MFA or password recovery; the UI shows the latest 100 events without a history export tool. Code coverage cannot establish complete security or every possible race. HTTPS, secure cookies and deployment access controls are prerequisites for any later public use.
+To run it:
 
-<!-- pagebreak -->
+```
+uv venv
+source .venv/bin/activate.fish
+uv pip install -r requirements.txt
+set -x PRICE_API_KEY your-finnhub-key
+python app.py
+```
 
-## 5. Deployment contract, evidence and disclosure
+Then open http://localhost:8080, create an account and add a ticker. The README has the full list of settings and the coverage command.
 
-The application meets the Assignment 1 runtime shape: one process started by python app.py, HOST defaulting to 0.0.0.0, PORT defaulting to 8080, no interactive server setup, one configurable SQLite path, and no required external service at startup; prices need a Finnhub key. requirements.txt is the sole manifest, with seven direct dependencies. There is no Dockerfile, Compose configuration, authored CI workflow, IaC or public deployment.
+For Assignment 2 the container needs a persistent volume for `DATA_DIR`, one replica, HTTPS with `SESSION_COOKIE_SECURE=true` and a fixed `SECRET_KEY`. Without a fixed key everyone has to log in again after a restart.
 
-Configuration uses optional environment variables, including polling, caching, authentication limits and storage capacities. The app does not require a .env file; app.py reads one if it exists and real environment variables win. The public /health endpoint reads the three business tables and two access-control tables, returning a generic 503 if a read fails. Logs go to stdout. Readiness is tested from a previously nonexistent data directory.
+## 7. What I chose not to build
 
-For Assignment 2, a persistent DATA_DIR volume prevents losing data with the container. Run one replica, use HTTPS, set SESSION_COOKIE_SECURE=true and supply a strong stable SECRET_KEY as a runtime secret. Without an explicit signing secret, a random startup default keeps local setup simple but requires users to sign in after restart. A future reverse proxy needs explicit trusted-proxy configuration; otherwise IP throttling may group users at the proxy address. No deployment is performed in this assignment.
+I left out notifications by email or push and I left out trading (ADR-5). Both need an outside service or a lot of extra code I'd have to secure and explain, and the core use case works without them. Fired alerts show up on screen and in the history.
 
-### Assessment evidence still owned by the author
+## 8. AI disclosure
 
-The original history contains generic commit messages that the brief excludes from meaningful cadence. Before this revision there were 25 local commits over six dates, with ten on 30 September; excluding clearly generic messages left fewer qualifying days. New branches do not repair earlier push timestamps. Remote push evidence must be assessed independently, and history must not be fabricated or backdated.
-
-Exactly five ADR entries remain, introduced across three real commit dates. Today's revisions record the new private-account scope. ADR-2 also records that its displayed date was changed in a later historical commit; the repository does not treat that edit as evidence of an earlier commit. The report and diagrams describe the current code rather than the original shared-workspace design.
-
-AI_USAGE.md still contains seven unfinished personal-explanation cells. They must be completed by the author after reading and understanding the code. The final review also needs accurate disclosure in the detailed log before submission; that file has not been changed during this review. Professor approval of the use case and attendance at the closed-book comprehension check cannot be established from source code. The check multiplies the technical subtotal, so a working application alone cannot guarantee 100/100.
-
-### AI disclosure
-
-I acknowledge the use of Claude and Claude Code to plan and generate the initial application, tests and documentation, and Codex to review the brief, implement the private-account revision, expand safety tests, redesign the interface and revise the report and diagrams. The prompts used include building separate watchlist and alerts domains, checking the submission against the assignment, improving the frontend and login within one process and two domains, and replacing simulated prices with live Finnhub data streamed over a server-side WebSocket. The output of these prompts was used to create and revise the implementation and its supporting material. The personal comprehension explanations remain the author's responsibility.
-
-### Technical references
-
-- Flask, Security Considerations: https://flask.palletsprojects.com/en/stable/web-security/
-- Werkzeug, Security Helpers: https://werkzeug.palletsprojects.com/en/stable/utils/#module-werkzeug.security
-- OWASP, Authentication Cheat Sheet: https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
-- Finnhub, WebSocket Trades and Quote API: https://finnhub.io/docs/api/websocket-trades
-
-These references informed the access-control review and the price feed; they are not a security certification of this application.
+I acknowledge the use of Claude Code (Claude Opus 5.5) and Codex to plan and write most of the code and tests with drafts of the documentation, and to review the project against the assignment brief. The prompts used include building the watchlist and alerts domains behind small interfaces, adding the poller and the price cache, writing tests to reach the coverage target, adding private accounts, replacing demo prices with live Finnhub data and turning the watchlist into a real-time dashboard. The output of these prompts was used to create and revise the code in `app/`, the tests, the README, the ADR entries, the diagrams and this report, after I read and checked it. Every interaction is logged in `AI_USAGE.md`, and its last column is where I write in my own words how the accepted code works.
