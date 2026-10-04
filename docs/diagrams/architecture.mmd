@@ -7,7 +7,8 @@ flowchart TB
         alert["ALERTS<br/>Routes / Service<br/>Repository"]
         reader["WatchlistReader<br/>Same owner"]
         price["LivePrices<br/>PriceSource + snapshot"]
-        quotes["/api/quotes<br/>Own tickers only"]
+        quotes["/api/quotes, search, details<br/>Signed-in, own tickers only"]
+        info["MarketInfo<br/>Market status / search / details<br/>Cached"]
         stream["Finnhub stream<br/>Daemon threads, app.py"]
         rest["Cached REST quotes<br/>Key in header"]
         poller["Daemon poller<br/>Started only by app.py"]
@@ -32,10 +33,12 @@ flowchart TB
     stream --> ws
     stream -. watched tickers .-> watch
     rest --> api
+    quotes --> info
+    info --> api
     watch --> db
     alert --> db
     access --> db
     classDef support fill:#eef2fa,stroke:#7b90b3,color:#182337
     classDef feature fill:#e9f3ee,stroke:#4c8c6b,color:#182337
-    class root,access,reader,poller,price,quotes,stream,rest support
+    class root,access,reader,poller,price,quotes,info,stream,rest support
     class watch,alert feature

@@ -38,7 +38,7 @@ def test_defaults_when_nothing_is_set():
     assert config.data_dir == Path("./data")
     assert config.db_path == Path("./data") / "app.db"
     assert config.price_api_key is None
-    assert config.poll_interval_seconds == 15
+    assert config.poll_interval_seconds == 5
     assert config.live_symbol_limit == 50
     assert config.price_cache_ttl_seconds == 30
     assert len(config.secret_key) >= 32

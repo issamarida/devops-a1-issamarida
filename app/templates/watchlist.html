@@ -1,28 +1,30 @@
 {% extends "base.html" %}
-{% block title %}Watchlist{% endblock %}
+{% block title %}Dashboard{% endblock %}
 {% block content %}
-<div class="heading"><div><div class="eyebrow">Your market, at a glance</div><h1>Your watchlist</h1><p>Keep the stocks you follow together, with a note on what you are watching for.</p></div><a class="button secondary" href="{{ url_for('alerts.list_rules') }}">Manage price alerts <span aria-hidden="true">→</span></a></div>
+<div class="heading"><div><div class="eyebrow">Your market, at a glance</div><h1>Your watchlist</h1><p>Live prices, today's move and where each stock sits in its range. Updated every second.</p></div><a class="button secondary" href="{{ url_for('alerts.list_rules') }}">Manage price alerts <span aria-hidden="true">→</span></a></div>
 <div class="stats" aria-label="Workspace summary">
   <div class="stat"><div class="stat-label">Tracked assets <span aria-hidden="true">▤</span></div><span class="stat-value">{{ asset_count }}</span><small>Stocks on your watchlist</small></div>
-  <div class="stat"><div class="stat-label">Active alerts <span aria-hidden="true">◎</span></div><span class="stat-value">{{ active_count }}</span><small>Waiting for a price condition</small></div>
-  <div class="stat"><div class="stat-label">Alerts triggered <span aria-hidden="true">↗</span></div><span class="stat-value">{{ event_count }}</span><small>Saved in your history</small></div>
+  <div class="stat"><div class="stat-label">Up / down today</div><span class="stat-value"><span class="move up" data-stat="up">0</span> <span class="muted">/</span> <span class="move down" data-stat="down">0</span></span><div class="breadth" aria-hidden="true"><span class="b-up" data-breadth="up"></span><span class="b-down" data-breadth="down"></span></div><small>Against the previous close</small></div>
+  <div class="stat"><div class="stat-label">Active alerts <span aria-hidden="true">◎</span></div><span class="stat-value" data-stat="active">{{ active_count }}</span><small>Waiting for a price condition</small></div>
+  <div class="stat"><div class="stat-label">Alerts triggered <span aria-hidden="true">↗</span></div><span class="stat-value" data-stat="events">{{ event_count }}</span><small>Saved in your history</small></div>
 </div>
 <div class="layout">
   <section class="card" aria-labelledby="assets-heading">
-    <div class="card-head"><div><h2 id="assets-heading">Tracked assets</h2><p>Prices update live while markets are open.</p></div><span class="badge">{{ items|length }} assets</span></div>
-    {% if items %}<div class="table-wrap"><table><thead><tr><th scope="col">Asset</th><th scope="col">Last price (USD)</th><th scope="col">Day change</th><th scope="col" class="hide-sm">Your note</th><th scope="col" class="hide-sm">Added (UTC)</th><th scope="col">Actions</th></tr></thead><tbody>
-      {% for item in items %}<tr><td><span class="ticker">{{ item.ticker }}</span><span class="company">{{ item.name }}</span></td><td data-quote="{{ item.ticker }}" data-field="price">—</td><td class="move" data-quote="{{ item.ticker }}" data-field="change">—</td><td class="note hide-sm">{{ item.notes or 'No note added' }}</td><td class="nowrap muted hide-sm">{{ item.added_at[:10] }}</td><td class="end"><form class="inline" method="post" action="{{ url_for('watchlist.delete_item', ticker=item.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="link danger" type="submit" aria-label="Remove {{ item.ticker }}">Remove</button></form></td></tr>{% endfor %}
+    <div class="card-head"><div><h2 id="assets-heading">Tracked assets</h2><p>Trades stream live while the market is open. Otherwise the latest quote is shown.</p></div><span class="badge">{{ items|length }} assets</span></div>
+    {% if items %}<div class="table-wrap"><table><thead><tr><th scope="col">Asset</th><th scope="col" class="num">Last price (USD)</th><th scope="col" class="num">Today</th><th scope="col" class="hide-sm">Trend (20 min)</th><th scope="col" class="hide-sm">Day range</th><th scope="col" class="hide-md">52 week range</th><th scope="col" class="hide-md">Your note</th><th scope="col"><span class="hide-sm">Actions</span></th></tr></thead><tbody>
+      {% for item in items %}<tr data-details="{{ item.ticker }}" data-details-url="{{ url_for('market.details', ticker=item.ticker) }}"><td class="asset"><span class="ticker">{{ item.ticker }}</span><span class="company">{{ item.name }}</span><span class="meta" data-meta></span></td><td class="num" data-quote="{{ item.ticker }}" data-field="price">—</td><td class="num move" data-quote="{{ item.ticker }}" data-field="change">—</td><td class="hide-sm" data-quote="{{ item.ticker }}" data-field="spark">—</td><td class="range hide-sm" data-quote="{{ item.ticker }}" data-field="range">—</td><td class="range hide-md" data-quote="{{ item.ticker }}" data-field="year">—</td><td class="note hide-md">{{ item.notes or 'No note added' }}<span class="meta">Added {{ item.added_at[:10] }}</span></td><td class="end"><form class="inline" method="post" action="{{ url_for('watchlist.delete_item', ticker=item.ticker) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="link danger" type="submit" aria-label="Remove {{ item.ticker }}">Remove</button></form></td></tr>{% endfor %}
     </tbody></table></div>{% else %}<div class="empty"><div class="empty-icon" aria-hidden="true">+</div><h3>Your next idea starts here</h3><p>No assets on the watchlist yet. Add a stock you follow, then set an alert for a price that matters to you.</p><a class="button secondary" href="#add-asset">Add your first asset</a></div>{% endif %}
   </section>
   <aside class="stack" aria-label="Watchlist tools">
-    <section class="card" id="add-asset"><div class="card-head"><div><h2>Add an asset</h2><p>Start with a US stock ticker.</p></div></div><div class="card-body"><form class="add" method="post" action="{{ url_for('watchlist.add_item') }}">
+    <section class="card" id="add-asset"><div class="card-head"><div><h2>Add an asset</h2><p>Type a ticker or company name to search US stocks.</p></div></div><div class="card-body"><form class="add" method="post" action="{{ url_for('watchlist.add_item') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>Ticker<input name="ticker" maxlength="10" placeholder="AAPL" autocomplete="off" required></label>
-      <label>Company name<input name="name" maxlength="100" placeholder="Apple" required></label>
+      <label>Ticker<input name="ticker" maxlength="10" placeholder="AAPL" autocomplete="off" list="ticker-options" data-search required></label>
+      <datalist id="ticker-options"></datalist>
+      <label>Company name<input name="name" maxlength="100" placeholder="Apple" data-name required></label>
       <label>Note <span class="hint">Optional · up to 500 characters</span><input name="notes" maxlength="500" placeholder="What are you watching for?"></label>
       <button type="submit">+ Add to watchlist</button>
     </form></div></section>
-    <section class="card"><div class="card-head"><h2>A simple routine</h2></div><div class="card-body"><ol class="guide"><li><span><strong>Pick your stocks</strong>Add a ticker and a short note.</span></li><li><span><strong>Set a threshold</strong>Create an above or below rule in Price alerts.</span></li><li><span><strong>Check back</strong>Triggered alerts appear in your history.</span></li></ol></div></section>
+    <section class="card"><div class="card-head"><h2>Reading the dashboard</h2></div><div class="card-body"><ol class="guide"><li><span><strong>Today</strong>Change against yesterday's close, in green or red with an arrow.</span></li><li><span><strong>Trend</strong>Every live trade from the last 20 minutes. Empty while the market is closed.</span></li><li><span><strong>Ranges</strong>The dark marker is the current price between the low and the high. The small tick is today's open.</span></li></ol></div></section>
   </aside>
 </div>
 <p class="hint">Removing an asset pauses its active rules. Add the same ticker again to resume them.</p>

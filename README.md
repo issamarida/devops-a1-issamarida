@@ -19,7 +19,7 @@ For bash/zsh use `source .venv/bin/activate` instead. Plain pip also works: `pyt
 
 Open http://localhost:8080. Create an account in the browser, then sign in. There are no default credentials and no interactive server setup. Tables and compatible schema upgrades run automatically at startup. `GET /health` is public and returns 200 only when all five tables can be read.
 
-Every price comes from Finnhub. A free key from finnhub.io is enough. Set it in your shell before starting the app, for example `set -x PRICE_API_KEY your-key` in fish or `export PRICE_API_KEY=your-key` in bash. To try it, add AAPL to your watchlist, create an **above 1.00** rule, and select **Check rules now**. The real AAPL price is above 1, so it fires once. Repeat the check to confirm there is no second event.
+Every price comes from Finnhub. A free key from finnhub.io is enough. Either set it in your shell before starting the app, for example `set -x PRICE_API_KEY your-key` in fish or `export PRICE_API_KEY=your-key` in bash, or put the line `PRICE_API_KEY=your-key` in a `.env` file next to `app.py`. `.env` is git-ignored and optional. A variable already set in the shell always wins over the file. To try it, add AAPL to your watchlist, create an **above 1.00** rule, and select **Check rules now**. The real AAPL price is above 1, so it fires once. Repeat the check to confirm there is no second event.
 
 ## Live prices
 
@@ -27,8 +27,11 @@ While US markets are open, prices tick in the watchlist and the alert rules tabl
 
 1. At startup `app.py` opens one WebSocket connection from the server to `wss://ws.finnhub.io` and subscribes to every ticker any account watches, most watched first, up to `LIVE_SYMBOL_LIMIT`. New tickers are picked up within a few seconds; removed ones are unsubscribed.
 2. Each trade Finnhub pushes is kept in memory as the latest price for that ticker.
-3. Each page polls `GET /api/quotes` on this server every two seconds. The endpoint needs a signed-in session and only returns the account's own tickers. It returns the latest trade, or the REST quote when no trade has arrived in the last minute (markets closed, quiet ticker), plus the change since the previous close.
+3. Each page polls `GET /api/quotes` on this server every second. The endpoint needs a signed-in session and only returns the account's own tickers. It returns the latest trade, or the REST quote when no trade has arrived in the last minute (markets closed, quiet ticker), plus the change since the previous close, the day open, high and low, and up to 20 minutes of streamed trade prices for the sparkline. It also returns the US market session and the account's newest alert event, so a rule fired by the background poller shows up on screen within a second.
 4. The alert poller uses the same prices, so a rule fires on a live trade within one `POLL_INTERVAL_SECONDS` interval.
+5. `GET /api/search?q=` suggests US tickers in the add form and fills in the company name. `GET /api/details/<ticker>` returns industry, market cap and the 52 week range, only for tickers on the account's own watchlist.
+
+The dashboard shows each asset's live price, today's change, a sparkline of recent trades, the day range and the 52 week range, plus how many assets are up or down. Finnhub's candle endpoint is not on the free plan, so the sparkline is built from the trades this server streams. Market status is cached for a minute, search for an hour and company details for six hours. These extra calls never use the last 10 calls of the per minute budget, so quotes for alerts always have room.
 
 The browser never talks to Finnhub and never receives the key. The Content Security Policy only allows the page's own inline script and requests back to this server. The REST adapter sends the key in a header; the WebSocket needs it in the URL, which is never logged, and a log filter masks the key in every log line as a second safeguard. A dropped connection is retried after 1, 2, 4 and up to 60 seconds. If no key is set, the app still starts and serves the watchlist and rules, prices show as a dash, the pill reads Offline and the log says which setting is missing. No price is ever made up.
 
@@ -44,7 +47,7 @@ No brokerage integration, trading, portfolio valuation, password recovery, MFA, 
 
 ## Configuration
 
-All settings come from optional environment variables. No `.env` file or source edit is required.
+All settings come from optional environment variables. No `.env` file or source edit is required. `app.py` reads a `.env` file next to it if one exists, using a few lines of standard library code, and never overrides a variable that is already set.
 
 | Variable | Default | Meaning |
 |---|---|---|
@@ -52,9 +55,9 @@ All settings come from optional environment variables. No `.env` file or source 
 | `PORT` | `8080` | Integer from 1 to 65535 |
 | `DATA_DIR` | `./data` | SQLite path is `$DATA_DIR/app.db` |
 | `PRICE_API_KEY` | unset | Finnhub key, used for the live stream and REST quotes |
-| `POLL_INTERVAL_SECONDS` | `15` | Wait between alert checks; 0 disables automatic checks |
+| `POLL_INTERVAL_SECONDS` | `5` | Wait between alert checks; 0 disables automatic checks |
 | `PRICE_CACHE_TTL_SECONDS` | `30` | Cache live quotes; 0 disables reuse |
-| `QUOTE_REQUESTS_PER_MINUTE` | `30` | Shared rolling limit on outbound REST quote requests |
+| `QUOTE_REQUESTS_PER_MINUTE` | `50` | Shared rolling limit on all outbound REST requests; Finnhub's free plan allows 60 |
 | `LIVE_SYMBOL_LIMIT` | `50` | Most tickers streamed at once; Finnhub's free plan allows 50 |
 | `SECRET_KEY` | random at startup | Session signing secret; an explicit value needs at least 32 characters |
 | `SESSION_COOKIE_SECURE` | `false` | `true` for HTTPS; `false` permits local HTTP |
@@ -97,7 +100,7 @@ pytest --cov=app --cov-report=term-missing
 
 The coverage configuration measures services, repositories, rules, price adapters, configuration, database upgrades, polling and access control. Only domain route files and the composition root are excluded as framework wiring. Coverage below 70% fails the run. All quote calls and the WebSocket are faked in tests; the contract test uses local loopback HTTP only.
 
-Verified on 3 October 2026: **221 tests passed; 100% statement coverage across 771 statements** in the measured modules. Tests include the WebSocket subscribe/unsubscribe cycle, malformed stream messages, reconnect backoff, key redaction, the `/api/quotes` ownership check, concurrent one-shot firing, deletion/ID reuse, rollback, private ownership, dormant rules, malformed quotes, cache expiry, quotas, password hashing, CSRF, session revocation/expiry, throttling and automatic legacy upgrades. Statement coverage does not prove every possible input or race is safe.
+Verified on 4 October 2026: **240 tests passed; 100% statement coverage across 868 statements** in the measured modules. Tests include market status, search and company details caching, the shared call budget, the optional `.env` file, sparkline points, the WebSocket subscribe/unsubscribe cycle, malformed stream messages, reconnect backoff, key redaction, the `/api/quotes` ownership check, concurrent one-shot firing, deletion/ID reuse, rollback, private ownership, dormant rules, malformed quotes, cache expiry, quotas, password hashing, CSRF, session revocation/expiry, throttling and automatic legacy upgrades. Statement coverage does not prove every possible input or race is safe.
 
 Browser verification covers registration, login, adding assets, firing alerts, prices ticking on both pages, and layouts at 1440, 1024, 768 and 390 pixels. The interface uses Jinja templates, local CSS, labelled controls and keyboard focus styles, with horizontally scrollable tables on small screens.
 

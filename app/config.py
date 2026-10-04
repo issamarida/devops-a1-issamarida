@@ -22,7 +22,7 @@ class Config:
     max_accounts: int = 50
     max_watchlist_items: int = 30
     max_alert_rules: int = 100
-    quote_requests_per_minute: int = 30
+    quote_requests_per_minute: int = 50
     live_symbol_limit: int = 50
 
     @property
@@ -44,7 +44,7 @@ def load_config() -> Config:
     if port < 1 or port > 65535:
         raise ValueError(f"PORT must be between 1 and 65535, got {port}")
 
-    poll_interval_seconds = read_int("POLL_INTERVAL_SECONDS", "15")
+    poll_interval_seconds = read_int("POLL_INTERVAL_SECONDS", "5")
     if poll_interval_seconds < 0:
         raise ValueError(
             f"POLL_INTERVAL_SECONDS must be 0 or more, got {poll_interval_seconds}"
@@ -70,7 +70,7 @@ def load_config() -> Config:
         ("MAX_ACCOUNTS", "50"),
         ("MAX_WATCHLIST_ITEMS", "30"),
         ("MAX_ALERT_RULES", "100"),
-        ("QUOTE_REQUESTS_PER_MINUTE", "30"),
+        ("QUOTE_REQUESTS_PER_MINUTE", "50"),
         ("LIVE_SYMBOL_LIMIT", "50"),
     ):
         limits[name] = read_int(name, default)
@@ -96,6 +96,26 @@ def load_config() -> Config:
         quote_requests_per_minute=limits["QUOTE_REQUESTS_PER_MINUTE"],
         live_symbol_limit=limits["LIVE_SYMBOL_LIMIT"],
     )
+
+
+def load_env_file(path) -> None:
+    """Read KEY=value lines from an optional .env file into the environment.
+
+    A missing file is fine. A variable already set in the shell always wins,
+    so the file is only a local convenience and never required.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.removeprefix("export ").strip()
+        value = value.strip().strip("'\"")
+        if name:
+            os.environ.setdefault(name, value)
 
 
 class RedactSecret:

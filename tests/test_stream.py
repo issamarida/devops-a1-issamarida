@@ -9,7 +9,7 @@ import pytest
 from app.config import RedactSecret
 from app.market.cache import CachedPriceSource
 from app.market.finnhub import FinnhubSource, Quote
-from app.market.stream import STREAM_URL, FinnhubStream, LivePrices, Trade
+from app.market.stream import MAX_POINTS, STREAM_URL, FinnhubStream, LivePrices, Trade
 from app.ports import PriceUnavailable
 
 FAKE_KEY = "fake-key-for-tests"
@@ -278,6 +278,9 @@ class FakeStream:
     def latest(self, ticker):
         return self.trades.get(ticker)
 
+    def recent(self, ticker):
+        return [1.0, 2.0] if ticker in self.trades else []
+
     def follow(self, tickers):
         self.followed.append(list(tickers))
 
@@ -324,7 +327,7 @@ def test_snapshot_prefers_live_trade_and_computes_the_day_change():
     clock = FakeClock(1_000)
     stream = FakeStream()
     stream.trades["AAPL"] = Trade(110.0, 999, received=999)
-    quotes = FakeQuotes({"AAPL": Quote(105.0, 100.0, 900)})
+    quotes = FakeQuotes({"AAPL": Quote(105.0, 100.0, 900, open=101.0, high=108.0, low=99.0)})
 
     body = live(stream, quotes, clock).snapshot(["AAPL"])
 
@@ -332,7 +335,12 @@ def test_snapshot_prefers_live_trade_and_computes_the_day_change():
         "status": "live",
         "server_time": 1_000,
         "quotes": {
-            "AAPL": {"price": 110.0, "change": 10.0, "percent": 10.0, "source": "live", "at": 999}
+            "AAPL": {
+                "price": 110.0, "change": 10.0, "percent": 10.0, "source": "live", "at": 999,
+                # The live trade is above the quote's day high, so it becomes the high.
+                "previous_close": 100.0, "open": 101.0, "high": 110.0, "low": 99.0,
+                "spark": [1.0, 2.0],
+            }
         },
     }
     assert stream.followed == [["AAPL"]]
@@ -343,7 +351,8 @@ def test_snapshot_uses_the_quote_when_no_trade_has_arrived():
     body = live(FakeStream(connected=False), quotes).snapshot(["MSFT"])
     assert body["status"] == "connecting"
     assert body["quotes"]["MSFT"] == {
-        "price": 400.0, "change": None, "percent": None, "source": "quote", "at": 900
+        "price": 400.0, "change": None, "percent": None, "source": "quote", "at": 900,
+        "previous_close": None, "open": None, "high": None, "low": None, "spark": [],
     }
 
 
@@ -446,3 +455,30 @@ def test_a_long_healthy_connection_resets_the_reconnect_delay():
     with patch.object(stream.stop_event, "wait") as wait:
         stream.run()
     assert [call.args[0] for call in wait.call_args_list] == [1, 2, 1]
+
+
+# Sparkline points from streamed trades
+
+
+def spark_trade(ticker, price, at_ms):
+    return json.dumps({"type": "trade", "data": [{"s": ticker, "p": price, "t": at_ms}]})
+
+
+def test_trades_build_one_sparkline_point_per_five_seconds():
+    stream = FinnhubStream(FAKE_KEY, lambda: [])
+    stream.subscribed = {"AAPL"}
+    stream.handle_message(spark_trade("AAPL", 100.0, 1_000_000))
+    stream.handle_message(spark_trade("AAPL", 101.0, 1_002_000))  # same point, moved
+    stream.handle_message(spark_trade("AAPL", 102.0, 1_006_000))  # new point
+    assert stream.recent("AAPL") == [101.0, 102.0]
+    assert stream.recent("MSFT") == []
+
+
+def test_sparkline_keeps_only_the_latest_points():
+    stream = FinnhubStream(FAKE_KEY, lambda: [])
+    stream.subscribed = {"AAPL"}
+    for i in range(MAX_POINTS + 10):
+        stream.handle_message(spark_trade("AAPL", 100.0 + i, 1_000_000 + i * 5_000))
+    points = stream.recent("AAPL")
+    assert len(points) == MAX_POINTS
+    assert points[-1] == 100.0 + MAX_POINTS + 9

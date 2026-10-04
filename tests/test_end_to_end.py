@@ -292,3 +292,29 @@ def patch_connect():
     from unittest.mock import patch
 
     return patch("app.market.stream.websocket.WebSocketApp")
+
+
+def test_quotes_api_adds_market_status_and_the_latest_alert(api_client):
+    app, prices = api_client
+    client = app.test_client()
+    sign_up(client, "alice")
+    post_form(client, "/watchlist", data={"ticker": "AAPL", "name": "Apple"})
+    post_form(client, "/alerts", data={"ticker": "AAPL", "condition": "above", "threshold": "1"})
+    body = client.get("/api/quotes").get_json()
+    assert body["market"] is None  # no network in tests
+    assert body["alerts"] == {"event_count": 0, "latest": None}
+    app.extensions["alert_service"].evaluate_all()
+    body = client.get("/api/quotes").get_json()
+    assert body["alerts"]["event_count"] == 1
+    assert body["alerts"]["latest"]["ticker"] == "AAPL"
+
+
+def test_search_and_details_need_a_session_and_details_only_own_tickers(api_client):
+    app, _ = api_client
+    assert app.test_client().get("/api/search?q=AAPL").status_code == 401
+    client = app.test_client()
+    sign_up(client, "alice")
+    post_form(client, "/watchlist", data={"ticker": "AAPL", "name": "Apple"})
+    assert client.get("/api/search?q=AAPL").get_json() == {"results": []}
+    assert client.get("/api/details/aapl").get_json() == {"ticker": "AAPL", "details": None}
+    assert client.get("/api/details/TSLA").status_code == 404

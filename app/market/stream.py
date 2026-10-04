@@ -13,6 +13,7 @@ import json
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 
 import websocket
@@ -21,6 +22,9 @@ from app.market.finnhub import is_price
 from app.ports import PriceUnavailable
 
 STREAM_URL = "wss://ws.finnhub.io"
+# The sparkline keeps one point per 5 seconds, so 240 points cover 20 minutes.
+POINT_SECONDS = 5
+MAX_POINTS = 240
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +54,7 @@ class FinnhubStream:
         self.clock = clock
         self.connect = connect
         self.trades = {}  # ticker -> newest Trade
+        self.points = {}  # ticker -> deque of (time, price) for the sparkline
         self.subscribed = set()
         self.ws = None
         self.connected = False
@@ -65,6 +70,19 @@ class FinnhubStream:
     def latest(self, ticker: str) -> Trade | None:
         with self.lock:
             return self.trades.get(ticker)
+
+    def recent(self, ticker: str) -> list[float]:
+        """Recent trade prices, oldest first, for the sparkline."""
+        with self.lock:
+            return [price for _, price in self.points.get(ticker, ())]
+
+    def add_point(self, ticker, at, price) -> None:
+        """Start a new point every POINT_SECONDS, otherwise move the last one."""
+        points = self.points.setdefault(ticker, deque(maxlen=MAX_POINTS))
+        if points and at - points[-1][0] < POINT_SECONDS:
+            points[-1] = (points[-1][0], price)
+        else:
+            points.append((at, price))
 
     def follow(self, tickers) -> None:
         """Ask for a quick resync when a page needs a ticker we don't stream yet."""
@@ -98,6 +116,7 @@ class FinnhubStream:
                 # One message can hold many trades, not always in time order.
                 if current is None or at_ms / 1000 >= current.at:
                     self.trades[ticker] = Trade(float(price), at_ms / 1000, received)
+                    self.add_point(ticker, at_ms / 1000, float(price))
 
     def sync(self) -> None:
         """Subscribe to newly watched tickers and drop the ones nobody watches."""
@@ -115,6 +134,7 @@ class FinnhubStream:
             self.subscribed = (self.subscribed | set(added)) - set(removed)
             for ticker in removed:
                 self.trades.pop(ticker, None)
+                self.points.pop(ticker, None)
         try:
             for ticker in added:
                 ws.send(json.dumps({"type": "subscribe", "symbol": ticker}))
@@ -264,12 +284,20 @@ class LivePrices:
                 continue
             close = quote.previous_close if quote else None
             change = price - close if close else None
+            # A live trade can set a new day high or low before the REST quote knows.
+            high = max(quote.high, price) if quote and quote.high else None
+            low = min(quote.low, price) if quote and quote.low else None
             quotes[ticker] = {
                 "price": round(price, 4),
                 "change": round(change, 4) if change is not None else None,
                 "percent": round(change / close * 100, 2) if change is not None else None,
                 "source": source,
                 "at": at,
+                "previous_close": close,
+                "open": quote.open if quote else None,
+                "high": high,
+                "low": low,
+                "spark": self.stream.recent(ticker),
             }
         if not self.stream.enabled:
             status = "offline"

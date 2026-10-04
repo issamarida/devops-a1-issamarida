@@ -17,6 +17,7 @@ from app.config import Config
 from app.db import get_connection, init_db
 from app.market.cache import CachedPriceSource
 from app.market.finnhub import FinnhubSource
+from app.market.info import MarketInfo
 from app.market.routes import create_market_blueprint
 from app.market.stream import FinnhubStream, LivePrices
 from app.security import install_access
@@ -44,7 +45,14 @@ def create_app(config: Config, *, price_source=None) -> Flask:
 
     # Tests inject an offline fake. At runtime every price comes from Finnhub:
     # streamed trades first, the REST quote when no recent trade exists.
+    # Tests get a MarketInfo with no key, so it never calls the network.
+    info = MarketInfo(FinnhubSource(None))
     if price_source is None:
+        finnhub = FinnhubSource(
+            config.price_api_key,
+            requests_per_minute=config.quote_requests_per_minute,
+        )
+        info = MarketInfo(finnhub)
         stream = FinnhubStream(
             config.price_api_key,
             lambda: most_watched_tickers(config.db_path),
@@ -52,13 +60,7 @@ def create_app(config: Config, *, price_source=None) -> Flask:
         )
         price_source = LivePrices(
             stream,
-            CachedPriceSource(
-                FinnhubSource(
-                    config.price_api_key,
-                    requests_per_minute=config.quote_requests_per_minute,
-                ),
-                config.price_cache_ttl_seconds,
-            ),
+            CachedPriceSource(finnhub, config.price_cache_ttl_seconds),
         )
     # app.py starts this. create_app never opens a connection.
     app.extensions["price_stream"] = getattr(price_source, "stream", None)
@@ -79,10 +81,20 @@ def create_app(config: Config, *, price_source=None) -> Flask:
         create_watchlist_blueprint(lambda: watchlist_for(g.user["id"]))
     )
     app.register_blueprint(create_alerts_blueprint(lambda: alerts_for(g.user["id"])))
+    def alert_summary():
+        alerts = alerts_for(g.user["id"])
+        events = alerts.list_events()
+        return {
+            "event_count": alerts.count_events(),
+            "latest": events[0] if events else None,
+        }
+
     app.register_blueprint(
         create_market_blueprint(
             lambda: [item.ticker for item in watchlist_for(g.user["id"]).list_items()],
             price_source,
+            info,
+            alert_summary,
         )
     )
 
