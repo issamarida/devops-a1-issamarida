@@ -2,7 +2,7 @@ import pytest
 
 from app.alerts.repository import AlertRepository
 from app.alerts.service import AlertService, InvalidRuleError
-from app.ports import PriceUnavailable
+from app.ports import PriceUnavailable, WatchlistUnavailable
 
 
 class FakePriceSource:
@@ -23,6 +23,17 @@ class FakeWatchlistReader:
 
     def is_watched(self, ticker):
         return ticker in self.tickers
+
+
+class DownWatchlistReader:
+    """Stands in for a watchlist that can't be reached. Counts how often it was asked."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def is_watched(self, ticker):
+        self.calls += 1
+        raise WatchlistUnavailable("down")
 
 
 @pytest.fixture
@@ -172,3 +183,60 @@ def test_rule_capacity_is_enforced(service):
     with pytest.raises(InvalidRuleError, match="up to 1 rules"):
         service.create_rule("AAPL", "below", 300)
     assert len(service.list_rules()) == 1
+
+
+# The watchlist can't be reached
+
+
+def test_list_rules_still_loads_when_the_watchlist_is_down(service):
+    fired = service.create_rule("AAPL", "above", 190)
+    service.create_rule("AAPL", "above", 250)
+    service.create_rule("MSFT", "above", 500)
+    service.evaluate_all()
+    down = DownWatchlistReader()
+    service.watchlist_reader = down
+
+    rules = service.list_rules()
+
+    assert [rule["status"] for rule in rules] == ["fired", "unknown", "unknown"]
+    assert rules[0]["id"] == fired["id"]
+    assert service.watchlist_available is False
+    # Asked once, not once per rule, so the page waits for one timeout at most.
+    assert down.calls == 1
+
+
+def test_create_rule_stores_nothing_when_the_watchlist_is_down(service):
+    service.watchlist_reader = DownWatchlistReader()
+
+    with pytest.raises(WatchlistUnavailable):
+        service.create_rule("AAPL", "above", 190)
+
+    assert service.repository.list_rules() == []
+
+
+def test_evaluate_skips_the_check_when_the_watchlist_is_down(service, prices, caplog):
+    service.create_rule("AAPL", "above", 190)
+    service.create_rule("AAPL", "below", 250)
+    down = DownWatchlistReader()
+    service.watchlist_reader = down
+
+    assert service.evaluate_all() == []
+
+    assert service.watchlist_available is False
+    assert down.calls == 1
+    assert prices.calls == []
+    assert service.list_events() == []
+    assert [rule["is_active"] for rule in service.repository.list_rules()] == [1, 1]
+    assert "Watchlist unavailable" in caplog.text
+
+
+def test_rules_fire_again_once_the_watchlist_is_back(service, watchlist):
+    service.create_rule("AAPL", "above", 190)
+    service.watchlist_reader = DownWatchlistReader()
+    assert service.evaluate_all() == []
+
+    service.watchlist_reader = watchlist
+
+    assert len(service.evaluate_all()) == 1
+    assert service.watchlist_available is True
+    assert service.list_rules()[0]["status"] == "fired"
