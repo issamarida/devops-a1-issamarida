@@ -1,8 +1,13 @@
 """The alerts side of the seam: one HTTP request to the watchlist, with a timeout.
 
-requests.get is always mocked, so nothing here touches the network.
+The unit tests mock requests.get. The cross-seam tests at the bottom replace the
+watchlist service with a stub: a real HTTP server on localhost.
 """
 
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock, patch
 
 import pytest
@@ -174,80 +179,138 @@ def test_both_calls_fail_when_the_watchlist_is_down():
         watchlist.get_price("AAPL")
 
 
-# Across the seam: the real AlertService and repository on top of the HTTP client.
+# Across the seam: the real AlertService and AlertRepository call a stub watchlist
+# service over real HTTP. Nothing is mocked from here on.
 
 
-def alerts_for(db_path, owner_id=7):
-    """An AlertService wired the way the alerts service will wire it per request."""
+class StubWatchlist:
+    """Stands in for the watchlist service. Answers on a free localhost port."""
+
+    def __init__(self):
+        self.answer = ANSWER
+        self.delay_seconds = 0.0
+        self.paths = []  # every request it received
+        stub = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                stub.paths.append(self.path)
+                time.sleep(stub.delay_seconds)
+                found = self.path == "/internal/snapshot"
+                body = json.dumps(stub.answer if found else {}).encode()
+                try:
+                    self.send_response(200 if found else 404)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                except OSError:
+                    pass  # the caller timed out and hung up, which is the point
+
+            def log_message(self, *args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.server.server_port}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def stop(self):
+        """Like docker compose stop watchlist: the port stops answering."""
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture
+def stub():
+    stub = StubWatchlist()
+    yield stub
+    stub.stop()
+
+
+def alerts_for(db_path, url, owner_id=7, timeout_seconds=2.0):
+    """An AlertService wired the way the alerts service wires it for one request."""
     watchlist = RemoteWatchlist(
-        Snapshot(lambda: fetch_snapshot(BASE_URL, 2.0)), owner_id
+        Snapshot(lambda: fetch_snapshot(url, timeout_seconds)), owner_id
     )
     return AlertService(AlertRepository(db_path, owner_id), watchlist, watchlist)
 
 
-def test_a_rule_is_created_and_fires_over_http(db_path):
-    with patch(GET) as get:
-        get.return_value = fake_response(payload=ANSWER)
-        rule = alerts_for(db_path).create_rule("aapl", "above", 190)
-        assert rule["status"] == "active"
-        # The watched check and the status of the new rule share one request.
-        assert get.call_count == 1
+def test_a_rule_is_created_and_fires_across_the_seam(db_path, stub):
+    rule = alerts_for(db_path, stub.url).create_rule("aapl", "above", 190)
+    assert rule["status"] == "active"
+    # The watched check and the status of the new rule share one request.
+    assert stub.paths == ["/internal/snapshot"]
 
-        service = alerts_for(db_path)
-        fired = service.evaluate_all()
+    service = alerts_for(db_path, stub.url)
+    fired = service.evaluate_all()
 
     assert [r["id"] for r in fired] == [rule["id"]]
     assert service.list_events()[0]["observed_price"] == 200.0
     # One more request for the whole check: watched tickers and prices together.
-    assert get.call_count == 2
+    assert len(stub.paths) == 2
 
 
-def test_a_ticker_watched_by_another_account_is_refused(db_path):
-    with patch(GET) as get:
-        get.return_value = fake_response(payload=ANSWER)
-        with pytest.raises(ValueError, match="isn't on the watchlist"):
-            alerts_for(db_path, owner_id=7).create_rule("TSLA", "above", 100)
+def test_a_change_in_the_watchlist_is_seen_on_the_next_request(db_path, stub):
+    alerts_for(db_path, stub.url).create_rule("AAPL", "above", 190)
+
+    stub.answer = {"owners": {"7": []}, "prices": {}}
+
+    service = alerts_for(db_path, stub.url)
+    assert service.list_rules()[0]["status"] == "dormant"
+    assert service.evaluate_all() == []
 
 
-def test_a_ticker_without_a_price_keeps_its_rule_active(db_path):
-    with patch(GET) as get:
-        get.return_value = fake_response(payload=ANSWER)
-        alerts_for(db_path).create_rule("MSFT", "above", 1)
-        service = alerts_for(db_path)
+def test_a_ticker_watched_by_another_account_is_refused(db_path, stub):
+    with pytest.raises(ValueError, match="isn't on the watchlist"):
+        alerts_for(db_path, stub.url, owner_id=7).create_rule("TSLA", "above", 100)
 
-        assert service.evaluate_all() == []
+
+def test_a_ticker_without_a_price_keeps_its_rule_active(db_path, stub):
+    alerts_for(db_path, stub.url).create_rule("MSFT", "above", 1)
+    service = alerts_for(db_path, stub.url)
+
+    assert service.evaluate_all() == []
 
     assert service.unavailable_tickers == {"MSFT"}
     assert service.repository.list_rules()[0]["is_active"] == 1
 
 
-def test_alerts_keeps_serving_its_own_data_when_the_watchlist_times_out(db_path):
-    with patch(GET) as get:
-        get.return_value = fake_response(payload=ANSWER)
-        alerts_for(db_path).create_rule("AAPL", "above", 190)
-        alerts_for(db_path).create_rule("AAPL", "above", 250)
-        alerts_for(db_path).evaluate_all()
+@pytest.mark.parametrize("failure", ["stopped", "too slow"])
+def test_alerts_keeps_serving_its_own_data_without_the_watchlist(
+    db_path, stub, failure
+):
+    alerts_for(db_path, stub.url).create_rule("AAPL", "above", 190)
+    alerts_for(db_path, stub.url).create_rule("AAPL", "above", 250)
+    alerts_for(db_path, stub.url).evaluate_all()
 
-    with patch(GET, side_effect=requests.Timeout("slow")) as get:
-        # Listing still works. The fired rule is our own data, the other is unknown.
-        service = alerts_for(db_path)
-        rules = service.list_rules()
-        assert [rule["status"] for rule in rules] == ["fired", "unknown"]
-        assert service.watchlist_available is False
-        assert get.call_count == 1
+    if failure == "stopped":
+        stub.stop()
+    else:
+        stub.delay_seconds = 1.0
 
-        # History and delete never needed the watchlist.
-        assert len(service.list_events()) == 1
-        assert service.delete_rule(rules[0]["id"]) is True
+    def alerts():
+        return alerts_for(db_path, stub.url, timeout_seconds=0.2)
 
-        # A new rule is refused with a clear error and nothing is stored.
-        with pytest.raises(WatchlistUnavailable):
-            alerts_for(db_path).create_rule("AAPL", "below", 100)
-        assert len(service.repository.list_rules()) == 1
+    # Listing still works and comes back fast. The fired rule is our own data.
+    started = time.monotonic()
+    service = alerts()
+    rules = service.list_rules()
+    assert time.monotonic() - started < 0.8
+    assert [rule["status"] for rule in rules] == ["fired", "unknown"]
+    assert service.watchlist_available is False
 
-        # The check is skipped. The rule stays active and nothing fires.
-        checker = alerts_for(db_path)
-        assert checker.evaluate_all() == []
-        assert checker.watchlist_available is False
-        assert service.repository.list_rules()[0]["is_active"] == 1
-        assert len(service.list_events()) == 1
+    # History and delete never needed the watchlist.
+    assert len(service.list_events()) == 1
+    assert service.delete_rule(rules[0]["id"]) is True
+
+    # A new rule is refused with a clear error and nothing is stored.
+    with pytest.raises(WatchlistUnavailable, match="did not answer"):
+        alerts().create_rule("AAPL", "below", 100)
+    assert len(service.repository.list_rules()) == 1
+
+    # The check is skipped. The rule stays active and nothing fires.
+    checker = alerts()
+    assert checker.evaluate_all() == []
+    assert checker.watchlist_available is False
+    assert service.repository.list_rules()[0]["is_active"] == 1
+    assert len(service.list_events()) == 1
