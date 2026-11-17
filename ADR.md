@@ -69,3 +69,17 @@ Decision: I added username and password accounts as supporting access control ar
 Alternatives considered: My first version had one shared workspace with no login, which I rejected once it was clear investors could read and change each other's notes. An email or push delivery service was rejected because it adds an outside runtime dependency beyond the price API.
 
 Consequences: Fired alerts are only visible inside the app, and a forgotten password cannot be recovered. HTTPS and network access controls are still needed before any public use.
+
+## 6. Splitting the monolith into two services
+
+Date: 2026-11-17
+
+Status: Decided
+
+Context: Assignment 2 gives each domain its own service and its own database, so the seam from ADR-2 becomes a network call that can be slow or fail. Alerts still needs to know which tickers are watched and what they cost, and it must keep serving its own data when the watchlist service is stopped.
+
+Decision: ADR-2 held, so the seam stays where it was: the watchlist service keeps the tracked assets and the Finnhub price adapters, the alerts service keeps its rules, history and poller, and alerts calls watchlist on the server side with one HTTP request that returns the watched tickers and their prices behind the same WatchlistReader and PriceSource interfaces. Every call has a timeout read from an environment variable, and when watchlist does not answer, rules are listed with an unknown status, a new rule is refused with a clear error and the poller skips that check.
+
+Alternatives considered: Giving alerts its own Finnhub client was rejected because one API key has one rate limit and watchlist already knows which tickers to stream. Joining the two services in the browser was rejected for this flow because the poller runs with no browser, one request per rule was rejected as too chatty over a network, and checking rules against the last known prices while watchlist is down was rejected because a stale price could fire a rule wrongly.
+
+Consequences: Watchlist never calls alerts, so it keeps working when alerts is stopped and the dashboard's alert summary now comes from the UI calling alerts itself. The cost is that rules cannot be created or checked while watchlist is down, and the timeout and failure paths are new code the tests have to cover.
