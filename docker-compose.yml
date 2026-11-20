@@ -1,0 +1,70 @@
+# The local system. `docker compose up --build` starts all of it from a clean clone.
+#
+# So far it holds the database side: one SQL Server container with one database
+# and one login per service (brief section 1a). The two services and the UI are
+# added here together with their Dockerfiles.
+
+services:
+  # Runs once and exits. Makes up the local passwords on the first start and
+  # keeps them in a volume, so no password is written in this repository.
+  # It uses the SQL Server image only because that image is needed anyway and
+  # has a shell. It runs as root to be allowed to write into the new volume.
+  secrets:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    user: root
+    entrypoint: ["/bin/sh", "/db/make-secrets.sh"]
+    volumes:
+      - ./db:/db:ro
+      - local-secrets:/run/local-secrets
+
+  db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
+    environment:
+      ACCEPT_EULA: "Y"
+      # SQL Server reads the administrator password from this file.
+      MSSQL_SA_PASSWORD_FILE: /run/local-secrets/sa_password
+    ports:
+      # Reachable from this machine only, for the tests. Set DB_PORT if 1433 is taken.
+      - "127.0.0.1:${DB_PORT:-1433}:1433"
+    volumes:
+      - local-secrets:/run/local-secrets:ro
+      # The data lives here and survives `docker compose down` and a rebuild.
+      - db-data:/var/opt/mssql
+    healthcheck:
+      # Healthy once SQL Server accepts a login and answers a query.
+      # -C accepts the certificate that the local server signs itself.
+      test:
+        - CMD-SHELL
+        - >-
+          SQLCMDPASSWORD="$$(cat /run/local-secrets/sa_password)"
+          /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -Q "SELECT 1" > /dev/null
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  # Runs on every start and exits. Creates the two databases and the two logins
+  # if they are missing. db/init.sql is safe to run again.
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./db:/db:ro
+      - local-secrets:/run/local-secrets:ro
+    entrypoint: ["/bin/sh", "-c"]
+    # sqlcmd takes its own password from SQLCMDPASSWORD and fills the $(...)
+    # names in init.sql from the other two variables. -b stops at the first error.
+    command:
+      - |
+        export SQLCMDPASSWORD="$$(cat /run/local-secrets/sa_password)"
+        export WATCHLIST_PASSWORD="$$(cat /run/local-secrets/watchlist_password)"
+        export ALERTS_PASSWORD="$$(cat /run/local-secrets/alerts_password)"
+        exec /opt/mssql-tools18/bin/sqlcmd -S db -U sa -C -b -i /db/init.sql
+
+volumes:
+  local-secrets:
+  db-data:
