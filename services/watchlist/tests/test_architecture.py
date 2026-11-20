@@ -1,10 +1,10 @@
-"""Checks the import rules between domains by reading the source with ast."""
+"""Checks the import rules inside the watchlist service by reading the source with ast."""
 
 import ast
 from pathlib import Path
 
 APP_DIR = Path(__file__).resolve().parent.parent / "app"
-DOMAINS = ("app.watchlist", "app.alerts", "app.market")
+DOMAINS = ("app.watchlist", "app.market")
 
 
 def module_name(path: Path) -> str:
@@ -66,20 +66,24 @@ def check_forbidden(owner: str, forbidden: tuple[str, ...]) -> list[str]:
     return sorted(set(problems))
 
 
-def test_alerts_does_not_import_watchlist_or_market():
-    problems = check_forbidden("app.alerts", ("app.watchlist", "app.market"))
+def test_watchlist_does_not_import_market_or_ports():
+    problems = check_forbidden("app.watchlist", ("app.market", "app.ports"))
     assert problems == [], "\n".join(problems)
 
 
-def test_watchlist_does_not_import_alerts_market_or_ports():
-    problems = check_forbidden(
-        "app.watchlist", ("app.alerts", "app.market", "app.ports")
-    )
+def test_market_does_not_import_watchlist():
+    problems = check_forbidden("app.market", ("app.watchlist",))
     assert problems == [], "\n".join(problems)
 
 
-def test_market_does_not_import_alerts_or_watchlist():
-    problems = check_forbidden("app.market", ("app.alerts", "app.watchlist"))
+def test_nothing_here_imports_the_alerts_service():
+    # The two services only meet over HTTP. Neither holds the other's code.
+    problems = [
+        f"{path.relative_to(APP_DIR.parent)} imports {name}"
+        for path, _, imports in all_modules()
+        for name in imports
+        if is_within(name, "app.alerts") or "services" in name.split(".")
+    ]
     assert problems == [], "\n".join(problems)
 
 
@@ -100,18 +104,18 @@ def test_only_create_app_imports_from_more_than_one_domain():
 
 
 def test_resolve_turns_relative_imports_into_absolute_names():
-    # "from .repository import X" inside app.alerts
-    assert resolve("app.alerts", 1, "repository") == "app.alerts.repository"
-    # "from ..watchlist import service" inside app.alerts
-    assert resolve("app.alerts", 2, "watchlist") == "app.watchlist"
-    # "from .. import market" inside app.alerts
-    assert resolve("app.alerts", 2, None) == "app"
-    assert resolve("app.alerts", 0, "app.ports") == "app.ports"
+    # "from .repository import X" inside app.watchlist
+    assert resolve("app.watchlist", 1, "repository") == "app.watchlist.repository"
+    # "from ..market import cache" inside app.watchlist
+    assert resolve("app.watchlist", 2, "market") == "app.market"
+    # "from .. import market" inside app.watchlist
+    assert resolve("app.watchlist", 2, None) == "app"
+    assert resolve("app.watchlist", 0, "app.ports") == "app.ports"
 
 
 def test_module_name_maps_files_to_modules():
-    assert module_name(APP_DIR / "alerts" / "service.py") == "app.alerts.service"
-    assert module_name(APP_DIR / "alerts" / "__init__.py") == "app.alerts"
+    assert module_name(APP_DIR / "watchlist" / "service.py") == "app.watchlist.service"
+    assert module_name(APP_DIR / "watchlist" / "__init__.py") == "app.watchlist"
     assert module_name(APP_DIR / "__init__.py") == "app"
 
 

@@ -1,7 +1,7 @@
 """Watchlist domain: the assets the user tracks.
 
-Never imports app.alerts or app.market. WatchlistService.is_watched
-matches app.ports.WatchlistReader without importing it.
+Never imports app.market. Prices and the snapshot for the alerts service
+are put together in create_app.
 """
 
 from pathlib import Path

@@ -1,6 +1,6 @@
 [run]
 source = app
-# Framework glue and the composition root are left out, per brief section 4.
+# Thin route files and the composition root are left out, as in Assignment 1 (ADR-4).
 omit =
     app/*/routes.py
     app/__init__.py

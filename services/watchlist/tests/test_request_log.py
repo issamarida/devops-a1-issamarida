@@ -85,22 +85,21 @@ def test_the_duration_covers_the_time_spent_in_the_route(caplog):
     assert 50 <= duration_ms < 1000
 
 
-def test_the_real_app_logs_requests_that_access_control_answers(
-    tmp_path, monkeypatch, caplog
-):
-    # The sign-in redirect and the rejected form never reach a route. They
-    # still get a line, with the status the browser saw.
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+def test_the_real_app_logs_requests_that_access_control_answers(caplog):
+    # A request without a token never reaches a route. It still gets a line,
+    # with the status the browser saw.
     client = create_app(load_config(), price_source=object()).test_client()
     caplog.set_level(logging.INFO)
 
     client.get("/health")
-    client.get("/alerts")
-    client.post("/alerts", data={"ticker": "AAPL"})
+    client.get("/watchlist")
+    client.post("/auth/login", json={"username": "nobody", "password": "wrong"})
+    client.get("/internal/snapshot?tickers=AAPL")
 
     statuses = [LINE.match(line).groups()[:3] for line in request_lines(caplog)]
     assert statuses == [
         ("GET", "/health", "200"),
-        ("GET", "/alerts", "303"),
-        ("POST", "/alerts", "400"),
+        ("GET", "/watchlist", "401"),
+        ("POST", "/auth/login", "401"),
+        ("GET", "/internal/snapshot", "401"),
     ]

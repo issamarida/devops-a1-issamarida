@@ -1,170 +1,116 @@
-"""Exercise real cookies, CSRF, password hashes, access boundaries and throttling."""
+"""Exercise real tokens, password hashes, access boundaries, CORS and throttling."""
 
-import sqlite3
+import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
-from dataclasses import replace
-from unittest.mock import Mock
 
+import jwt
 import pytest
 
-from app import SCHEMA_FILES, create_app
-from app.config import load_config
-from app.db import get_connection, init_db
+from app.db import get_connection
 from app.security import AccessStore
+from app.tokens import issue_token
+from conftest import PASSWORD, TEST_TOKEN_SECRET
 
-PASSWORD = "a private test passphrase"
-
-
-def post(client, path, data=None, **kwargs):
-    client.get("/login")
-    with client.session_transaction() as cookie:
-        token = cookie["csrf"]
-    return client.post(path, data=dict(data or {}, csrf_token=token), **kwargs)
+UI_ORIGIN = "http://localhost:8080"
 
 
-def join(client, username):
-    assert (
-        post(
-            client, "/register", {"username": username, "password": PASSWORD}
-        ).status_code
-        == 303
-    )
-    assert (
-        post(client, "/login", {"username": username, "password": PASSWORD}).status_code
-        == 303
-    )
+def service_headers(secret=TEST_TOKEN_SECRET):
+    """The short-lived token the alerts service signs for the snapshot."""
+    now = int(time.time())
+    claims = {"sub": "alerts", "scope": "snapshot", "iat": now, "exp": now + 60}
+    return {"Authorization": "Bearer " + jwt.encode(claims, secret, algorithm="HS256")}
 
 
-@pytest.fixture
-def app(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.delenv("PRICE_API_KEY", raising=False)
-    monkeypatch.delenv("SECRET_KEY", raising=False)
-    return create_app(
-        load_config(), price_source=Mock(get_price=Mock(return_value=100.0))
-    )
-
-
-def test_all_private_pages_require_login_but_health_is_public(app):
-    client = app.test_client()
+def test_private_endpoints_need_a_token_but_health_is_public(client):
     assert client.get("/health").status_code == 200
-    for path in ("/watchlist", "/alerts"):
-        assert client.get(path).location == "/login"
-    assert (
-        post(client, "/watchlist", {"ticker": "AAPL", "name": "Apple"}).location
-        == "/login"
-    )
+    for path in ("/watchlist", "/api/quotes", "/api/search?q=A", "/api/details/AAPL"):
+        response = client.get(path)
+        assert response.status_code == 401
+        assert response.get_json() == {"error": "Sign in to continue."}
+    assert client.post("/watchlist", json={"ticker": "AAPL", "name": "Apple"}).status_code == 401
+    assert client.delete("/watchlist/AAPL").status_code == 401
 
 
-def test_csrf_blocks_signup_login_and_authenticated_mutations(app):
-    client = app.test_client()
-    for path in ("/register", "/login"):
-        assert (
-            client.post(
-                path, data={"username": "alice", "password": PASSWORD}
-            ).status_code
-            == 400
-        )
-    join(client, "alice")
-    for path in ("/watchlist", "/alerts", "/alerts/evaluate", "/logout"):
-        assert client.post(path, data={"csrf_token": "wrong"}).status_code == 400
+def test_sign_in_answers_with_a_token_and_sets_no_cookie(client, sign_up):
+    sign_up("alice")
+
+    response = client.post("/auth/login", json={"username": "alice", "password": PASSWORD})
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["username"] == "alice" and body["expires_in"] == 3600
+    assert "Set-Cookie" not in response.headers
+    assert client.get("/watchlist", headers={"Authorization": "Bearer " + body["token"]}).status_code == 200
 
 
-def test_password_is_hashed_and_session_is_revoked_on_logout(app):
-    client = app.test_client()
-    join(client, "alice")
-    store = app.extensions["access_store"]
-    with closing(get_connection(store.db_path)) as conn:
+@pytest.mark.parametrize(
+    "token",
+    [
+        issue_token("another-test-only-secret-also-not-real", 1, "alice", 3600),
+        issue_token(TEST_TOKEN_SECRET, 1, "alice", -1),
+        "not-a-token",
+    ],
+    ids=["signed with another secret", "expired", "not a token"],
+)
+def test_a_token_we_did_not_sign_or_that_expired_is_refused(client, sign_up, token):
+    sign_up("alice")
+
+    response = client.get("/watchlist", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+
+
+def test_the_token_must_use_the_bearer_scheme(client, sign_up):
+    token = sign_up("alice")["Authorization"].removeprefix("Bearer ")
+
+    assert client.get("/watchlist", headers={"Authorization": token}).status_code == 401
+    assert client.get("/watchlist", headers={"Authorization": f"Basic {token}"}).status_code == 401
+
+
+def test_password_is_stored_as_a_hash(app, sign_up):
+    sign_up("alice")
+
+    with closing(get_connection(app.extensions["access_store"].db_path)) as conn:
         row = conn.execute("SELECT * FROM accounts").fetchone()
-        assert row["password_hash"].startswith("scrypt:")
-        assert PASSWORD not in row["password_hash"]
-    stolen = client.get_cookie("session").value
-    assert post(client, "/logout").status_code == 303
-    client.set_cookie("session", stolen)
-    assert client.get("/watchlist").location == "/login"
+
+    assert PASSWORD not in row["password_hash"]
+    assert row["password_hash"].startswith("scrypt:")
 
 
-def test_new_login_invalidates_previous_session_and_old_csrf(app):
-    first, second = app.test_client(), app.test_client()
-    join(first, "alice")
-    first.get("/watchlist")
-    with first.session_transaction() as cookie:
-        old_csrf = cookie["csrf"]
-    assert (
-        post(second, "/login", {"username": "alice", "password": PASSWORD}).status_code
-        == 303
-    )
-    assert first.get("/watchlist").location == "/login"
-    assert second.post("/watchlist", data={"csrf_token": old_csrf}).status_code == 400
+def test_users_cannot_read_or_delete_each_others_data(client, sign_up):
+    alice, bob = sign_up("alice"), sign_up("bob")
+    item = {"ticker": "AAPL", "name": "Private Apple", "notes": "Only Alice sees this"}
+    client.post("/watchlist", json=item, headers=alice)
+
+    assert client.get("/watchlist", headers=bob).get_json() == {"items": []}
+    assert client.delete("/watchlist/AAPL", headers=bob).status_code == 404
+    assert client.get("/api/details/AAPL", headers=bob).status_code == 404
+    assert len(client.get("/watchlist", headers=alice).get_json()["items"]) == 1
+
+    # A forged owner field never changes whose list is written to.
+    forged = {"ticker": "MSFT", "name": "Bob only", "owner_id": 1}
+    assert client.post("/watchlist", json=forged, headers=bob).status_code == 201
+    tickers = [i["ticker"] for i in client.get("/watchlist", headers=alice).get_json()["items"]]
+    assert tickers == ["AAPL"]
 
 
-def test_session_expires_on_server(app):
-    client = app.test_client()
-    join(client, "alice")
-    store = app.extensions["access_store"]
-    now = store.clock()
-    store.clock = lambda: now + 3601
-    assert client.get("/alerts").location == "/login"
-
-
-def test_users_cannot_read_or_delete_each_others_data(app):
-    alice, bob = app.test_client(), app.test_client()
-    join(alice, "alice")
-    post(
-        alice,
-        "/watchlist",
-        {"ticker": "AAPL", "name": "Private Apple", "notes": "Only Alice sees this"},
-    )
-    post(alice, "/alerts", {"ticker": "AAPL", "condition": "above", "threshold": "1"})
-    post(alice, "/alerts/evaluate")
-    join(bob, "bob")
-    assert "Only Alice sees this" not in bob.get("/watchlist").text
-    assert '<span class="ticker">AAPL</span>' not in bob.get("/alerts").text
-    post(bob, "/watchlist/AAPL/delete")
-    post(bob, "/alerts/1/delete")
-    assert "Only Alice sees this" in alice.get("/watchlist").text
-    assert '<span class="ticker">AAPL</span>' in alice.get("/alerts").text
-    # A forged owner parameter never changes the signed-in account scope.
-    post(bob, "/watchlist", {"ticker": "MSFT", "name": "Bob only", "owner_id": "1"})
-    assert "Bob only" not in alice.get("/watchlist").text
-
-
-def test_one_accounts_watchlist_does_not_activate_anothers_rule(app):
-    alice, bob = app.test_client(), app.test_client()
-    join(alice, "alice")
-    join(bob, "bob")
-    for client in (alice, bob):
-        post(client, "/watchlist", {"ticker": "AAPL", "name": "Apple"})
-        post(
-            client,
-            "/alerts",
-            {"ticker": "AAPL", "condition": "above", "threshold": "1"},
-        )
-    post(alice, "/watchlist/AAPL/delete")
-    app.extensions["alert_service"].evaluate_all()
-    assert app.extensions["alerts_for"](1).list_events() == []
-    assert len(app.extensions["alerts_for"](2).list_events()) == 1
-
-
-def test_login_rate_limit_survives_restart_and_ignores_forwarded_address(app):
-    client = app.test_client()
-    join(client, "alice")  # first login consumed one attempt
+def test_login_rate_limit_survives_restart_and_ignores_forwarded_address(app, client, sign_up):
+    sign_up("alice")  # the first sign in used one attempt
+    wrong = {"username": "alice", "password": "wrong"}
     for _ in range(4):
-        assert (
-            post(
-                client, "/login", {"username": "alice", "password": "wrong"}
-            ).status_code
-            == 401
-        )
-    response = post(
-        client,
-        "/login",
-        {"username": "alice", "password": PASSWORD},
+        assert client.post("/auth/login", json=wrong).status_code == 401
+
+    response = client.post(
+        "/auth/login",
+        json={"username": "alice", "password": PASSWORD},
         headers={"X-Forwarded-For": "203.0.113.3"},
     )
+
     assert response.status_code == 429
     assert int(response.headers["Retry-After"]) > 0
+    assert response.get_json() == {"error": "Too many attempts. Please wait and try again."}
+    # The count is in the database, so a restart does not reset it.
     original = app.extensions["access_store"]
     reopened = AccessStore(original.db_path)
     assert reopened.consume("login-user:alice", 5, 900) > 0
@@ -172,13 +118,16 @@ def test_login_rate_limit_survives_restart_and_ignores_forwarded_address(app):
     assert reopened.consume("login-user:alice", 5, 900) == 0
 
 
-def test_unknown_and_wrong_password_have_identical_messages(app):
-    client = app.test_client()
-    join(client, "alice")
-    for username in ("alice", "missing"):
-        response = post(client, "/login", {"username": username, "password": "wrong"})
-        assert response.status_code == 401
-        assert "Incorrect username or password." in response.text
+def test_unknown_and_wrong_password_have_identical_answers(client, sign_up):
+    sign_up("alice")
+
+    answers = [
+        client.post("/auth/login", json={"username": username, "password": "wrong"})
+        for username in ("alice", "missing")
+    ]
+
+    assert [a.status_code for a in answers] == [401, 401]
+    assert answers[0].get_json() == answers[1].get_json()
 
 
 def test_registration_validation_duplicate_and_capacity(app):
@@ -199,21 +148,15 @@ def test_registration_validation_duplicate_and_capacity(app):
         store.register("bob", PASSWORD)
 
 
-def test_registration_throttle_and_validation_render_errors(app):
-    client = app.test_client()
+def test_registration_errors_are_json_and_then_throttled(client):
+    bad = {"username": "a", "password": "short"}
     for _ in range(5):
-        assert (
-            post(
-                client, "/register", {"username": "a", "password": "short"}
-            ).status_code
-            == 400
-        )
-    assert (
-        post(
-            client, "/register", {"username": "alice", "password": PASSWORD}
-        ).status_code
-        == 429
-    )
+        response = client.post("/auth/register", json=bad)
+        assert response.status_code == 400
+        assert "username" in response.get_json()["error"]
+
+    good = {"username": "alice", "password": PASSWORD}
+    assert client.post("/auth/register", json=good).status_code == 429
 
 
 def test_rate_limit_reservation_is_atomic(app):
@@ -223,90 +166,111 @@ def test_rate_limit_reservation_is_atomic(app):
     assert results.count(0) == 3
 
 
-def test_evaluate_is_rate_limited(app):
-    client = app.test_client()
-    join(client, "alice")
-    for _ in range(4):
-        assert post(client, "/alerts/evaluate").status_code == 302
-    assert post(client, "/alerts/evaluate").status_code == 429
-
-
-def test_escaped_notes_headers_cookie_flags_and_request_size(app):
-    client = app.test_client()
-    join(client, "alice")
-    post(
-        client,
-        "/watchlist",
-        {"ticker": "AAPL", "name": "Apple", "notes": "<script>alert(1)</script>"},
-    )
-    response = client.get("/watchlist")
-    assert "<script>alert(1)</script>" not in response.text
-    assert "&lt;script&gt;" in response.text
-    assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
-    assert response.headers["X-Content-Type-Options"] == "nosniff"
-    assert response.headers["Cache-Control"] == "no-store"
-    cookie = client.get_cookie("session")
-    assert cookie.http_only and cookie.same_site == "Lax"
-    assert client.post("/watchlist", data={"notes": "x" * 20000}).status_code == 413
-    assert client.get("/missing").status_code == 404
-
-
-def test_secure_cookie_setting_and_hsts(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    config = replace(load_config(), cookie_secure=True)
-    response = (
-        create_app(config).test_client().get("/login", base_url="https://example.test")
-    )
-    assert "Secure;" in response.headers["Set-Cookie"]
-    assert "max-age=" in response.headers["Strict-Transport-Security"]
-
-
-def test_automatic_upgrade_preserves_legacy_rows_without_exposing_them(tmp_path):
-    path = tmp_path / "legacy.db"
-    with closing(sqlite3.connect(path)) as conn:
-        conn.executescript("""
-            CREATE TABLE watchlist_items (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticker TEXT NOT NULL UNIQUE, name TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL);
-            INSERT INTO watchlist_items VALUES (1, 'AAPL', 'Apple', 'legacy private note', '2026-09-28');
-            CREATE TABLE alert_rules (id INTEGER PRIMARY KEY, ticker TEXT NOT NULL, condition TEXT NOT NULL,
-                threshold REAL NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
-            INSERT INTO alert_rules VALUES (1, 'AAPL', 'above', 100, 1, '2026-09-28');
-            CREATE TABLE alert_events (id INTEGER PRIMARY KEY, rule_id INTEGER REFERENCES alert_rules(id) ON DELETE SET NULL,
-                ticker TEXT NOT NULL, condition TEXT NOT NULL, threshold REAL NOT NULL, observed_price REAL NOT NULL, triggered_at TEXT NOT NULL);
-            INSERT INTO alert_events VALUES (1, 1, 'AAPL', 'above', 100, 120, '2026-09-28');
-        """)
-    init_db(path, SCHEMA_FILES)
-    init_db(path, SCHEMA_FILES)
-    with closing(get_connection(path)) as conn:
-        for table in ("watchlist_items", "alert_rules", "alert_events"):
-            assert (
-                conn.execute(
-                    f"SELECT COUNT(*) FROM {table} WHERE owner_id = 0"
-                ).fetchone()[0]
-                == 1
-            )
-        assert conn.execute("SELECT rule_token FROM alert_rules").fetchone()[0]
-        conn.execute(
-            "INSERT INTO watchlist_items(owner_id,ticker,name,added_at) VALUES(1,'AAPL','New owner','2026-10-03')"
-        )
-        conn.commit()
-        conn.execute("DELETE FROM alert_rules WHERE id = 1")
-        assert conn.execute("SELECT rule_id FROM alert_events").fetchone()[0] is None
-
-
-def test_unicode_csrf_is_rejected_without_server_error(app):
-    client = app.test_client()
-    client.get("/login")
-    assert client.post("/login", data={"csrf_token": "é" * 20}).status_code == 400
-
-
-def test_authenticated_write_rate_limit(app):
-    client = app.test_client()
-    join(client, "alice")
+def test_authenticated_write_rate_limit(app, client, sign_up):
+    alice = sign_up("alice")
     store = app.extensions["access_store"]
     for _ in range(60):
         assert store.consume("write:1", 60, 60) == 0
-    assert (
-        post(client, "/watchlist", {"ticker": "AAPL", "name": "Apple"}).status_code
-        == 429
+
+    response = client.post("/watchlist", json={"ticker": "AAPL", "name": "Apple"}, headers=alice)
+
+    assert response.status_code == 429
+    # Reading is never throttled.
+    assert client.get("/watchlist", headers=alice).status_code == 200
+
+
+def test_headers_and_request_size(client, sign_up):
+    alice = sign_up("alice")
+
+    response = client.get("/watchlist", headers=alice)
+
+    assert response.headers["X-Content-Type-Options"] == "nosniff"
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.headers["Referrer-Policy"] == "no-referrer"
+    too_big = client.post("/watchlist", json={"notes": "x" * 20000}, headers=alice)
+    assert too_big.status_code == 413
+    assert "error" in too_big.get_json()
+
+
+@pytest.mark.parametrize("body", [None, "plain text", "[1, 2]", '{"ticker": 5, "name": ["x"]}'])
+def test_a_body_that_is_not_the_expected_json_is_a_clean_400(client, sign_up, body):
+    alice = sign_up("alice")
+
+    response = client.post(
+        "/watchlist", data=body, content_type="application/json", headers=alice
     )
+
+    assert response.status_code == 400
+    assert response.get_json() == {"error": "Ticker must be 1-10 letters, digits or dots."}
+    assert client.post("/auth/login", data=body, content_type="application/json").status_code == 401
+
+
+# The snapshot endpoint is for the alerts service only.
+
+
+def test_snapshot_refuses_everyone_but_the_alerts_service(client, sign_up):
+    alice = sign_up("alice")
+
+    assert client.get("/internal/snapshot").status_code == 401
+    # A signed-in user is not the alerts service.
+    assert client.get("/internal/snapshot", headers=alice).status_code == 401
+    wrong_secret = service_headers("another-test-only-secret-also-not-real")
+    assert client.get("/internal/snapshot", headers=wrong_secret).status_code == 401
+
+    assert client.get("/internal/snapshot", headers=service_headers()).status_code == 200
+
+
+def test_the_service_token_does_not_open_a_users_data(client):
+    assert client.get("/watchlist", headers=service_headers()).status_code == 401
+
+
+# CORS: only the UI's own address may call this service from a browser.
+
+
+def preflight(client, origin, method="POST"):
+    return client.options(
+        "/watchlist",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": method,
+            "Access-Control-Request-Headers": "authorization,content-type",
+        },
+    )
+
+
+def test_cors_preflight_from_the_ui_is_allowed_without_a_token(client):
+    response = preflight(client, UI_ORIGIN)
+
+    assert response.status_code == 200
+    assert response.headers["Access-Control-Allow-Origin"] == UI_ORIGIN
+    allowed = response.headers["Access-Control-Allow-Headers"].lower()
+    assert "authorization" in allowed and "content-type" in allowed
+    assert "DELETE" in response.headers["Access-Control-Allow-Methods"]
+
+
+def test_cors_headers_are_not_sent_to_any_other_origin(client, sign_up):
+    alice = sign_up("alice")
+
+    assert "Access-Control-Allow-Origin" not in preflight(client, "https://evil.example").headers
+    response = client.get("/watchlist", headers=dict(alice, Origin="https://evil.example"))
+    assert "Access-Control-Allow-Origin" not in response.headers
+
+
+def test_an_error_answer_still_carries_the_cors_header(client):
+    # Without it the browser hides the 401 from the UI and reports a network error.
+    response = client.get("/watchlist", headers={"Origin": UI_ORIGIN})
+
+    assert response.status_code == 401
+    assert response.headers["Access-Control-Allow-Origin"] == UI_ORIGIN
+
+
+def test_cors_origin_comes_from_the_environment(monkeypatch, prices):
+    from app import create_app
+    from app.config import load_config
+
+    monkeypatch.setenv("CORS_ORIGINS", "https://ui.example/, https://second.example")
+    client = create_app(load_config(), price_source=prices).test_client()
+
+    assert preflight(client, "https://ui.example").headers["Access-Control-Allow-Origin"] == "https://ui.example"
+    assert preflight(client, "https://second.example").headers["Access-Control-Allow-Origin"] == "https://second.example"
+    assert "Access-Control-Allow-Origin" not in preflight(client, UI_ORIGIN).headers

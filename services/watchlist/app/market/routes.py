@@ -1,12 +1,12 @@
 """The JSON endpoints the pages poll. None of them ever returns the API key.
 
-security.py rejects every request here that has no signed-in account.
+security.py rejects every request here that has no valid sign-in token.
 """
 
 from flask import Blueprint, jsonify, request
 
 
-def create_market_blueprint(get_tickers, prices, info, get_alert_summary) -> Blueprint:
+def create_market_blueprint(get_tickers, prices, info) -> Blueprint:
     bp = Blueprint("market", __name__)
 
     @bp.get("/api/quotes")
@@ -14,8 +14,6 @@ def create_market_blueprint(get_tickers, prices, info, get_alert_summary) -> Blu
         # Only the signed-in account's own tickers.
         body = prices.snapshot(get_tickers())
         body["market"] = info.market_status()
-        # Lets the page announce an alert the moment the poller fires it.
-        body["alerts"] = get_alert_summary()
         return jsonify(body)
 
     @bp.get("/api/search")

@@ -1,5 +1,6 @@
-"""Checks the deployment contract from brief section 7 that Assignment 2 relies on."""
+"""Checks the rules this service must keep: how it starts, /health and what the folder may hold."""
 
+import json
 import os
 import socket
 import sqlite3
@@ -13,7 +14,8 @@ from pathlib import Path
 from app import create_app
 from app.config import load_config
 
-REPO_DIR = Path(__file__).resolve().parent.parent
+SERVICE_DIR = Path(__file__).resolve().parent.parent
+REPO_DIR = SERVICE_DIR.parent.parent
 
 
 def free_port() -> int:
@@ -40,13 +42,13 @@ def test_python_app_py_starts_and_reports_healthy(tmp_path):
     env = dict(os.environ)
     env["PORT"] = str(port)
     env["DATA_DIR"] = str(data_dir)
-    env["POLL_INTERVAL_SECONDS"] = "0"
     env["PRICE_API_KEY"] = ""  # never use a real key from my shell
+    env["GIT_SHA"] = "abc1234"
 
     log_path = tmp_path / "app.log"
     with open(log_path, "w") as log:
         process = subprocess.Popen(
-            [sys.executable, "app.py"], cwd=REPO_DIR, env=env, stdout=log, stderr=log
+            [sys.executable, "app.py"], cwd=SERVICE_DIR, env=env, stdout=log, stderr=log
         )
         try:
             status = None
@@ -59,34 +61,55 @@ def test_python_app_py_starts_and_reports_healthy(tmp_path):
 
             assert status == 200, log_path.read_text()
             assert (data_dir / "app.db").is_file()
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
+                body = json.load(response)
+            # Brief section 3: status, db and the version, which is the git SHA.
+            assert body == {"status": "ok", "db": "ok", "version": "abc1234"}
         finally:
             process.terminate()
             process.wait(timeout=5)
 
 
-def test_health_returns_503_without_details_when_a_table_is_missing(tmp_path, monkeypatch):
-    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+def test_python_app_py_refuses_to_start_without_the_token_secret(tmp_path):
+    env = dict(os.environ)
+    env["DATA_DIR"] = str(tmp_path)
+    env.pop("TOKEN_SECRET", None)
+    # An empty value in the shell wins over any local .env file.
+    env["TOKEN_SECRET"] = ""
+
+    result = subprocess.run(
+        [sys.executable, "app.py"], cwd=SERVICE_DIR, env=env, capture_output=True, text=True, timeout=20
+    )
+
+    assert result.returncode != 0
+    assert "TOKEN_SECRET must be set" in result.stderr
+
+
+def test_health_returns_503_without_details_when_the_database_is_broken():
     config = load_config()
     client = create_app(config).test_client()
-    assert client.get("/health").status_code == 200
+    assert client.get("/health").get_json() == {"status": "ok", "db": "ok", "version": "dev"}
 
     conn = sqlite3.connect(config.db_path)
-    conn.execute("DROP TABLE alert_events")
+    conn.execute("DROP TABLE health_check")
     conn.close()
 
     response = client.get("/health")
     assert response.status_code == 503
-    assert response.get_json() == {"status": "error"}
+    assert response.get_json() == {"status": "error", "db": "error", "version": "dev"}
 
 
-def test_no_container_ci_or_iac_files():
-    for name in ("Dockerfile", "docker-compose.yml", "compose.yaml", ".github/workflows"):
-        assert not (REPO_DIR / name).exists(), f"{name} must not exist"
+def test_health_needs_no_token_and_ignores_a_bad_one():
+    client = create_app(load_config()).test_client()
+
+    assert client.get("/health", headers={"Authorization": "Bearer nonsense"}).status_code == 200
 
 
-def test_requirements_txt_is_the_only_manifest():
-    assert (REPO_DIR / "requirements.txt").is_file()
+def test_requirements_txt_is_the_only_manifest_and_every_line_is_pinned():
+    lines = (SERVICE_DIR / "requirements.txt").read_text().split()
+    assert lines and all("==" in line for line in lines)
     for name in ("package.json", "pyproject.toml", "uv.lock", "Pipfile", "setup.py"):
+        assert not (SERVICE_DIR / name).exists(), f"{name} must not exist"
         assert not (REPO_DIR / name).exists(), f"{name} must not exist"
 
 
@@ -99,11 +122,14 @@ def test_no_env_or_database_file_is_tracked():
 
 
 def test_code_has_no_forbidden_settings():
-    paths = [REPO_DIR / "app.py"] + sorted((REPO_DIR / "app").rglob("*.py"))
+    paths = [SERVICE_DIR / "app.py"] + sorted((SERVICE_DIR / "app").rglob("*.py"))
     problems = []
     for path in paths:
         text = path.read_text()
-        for banned in ("journal_mode", "FileHandler", "debug=True", "localhost", "127.0.0.1"):
+        for banned in ("journal_mode", "FileHandler", "debug=True", "127.0.0.1"):
             if banned in text:
-                problems.append(f"{path.relative_to(REPO_DIR)} contains {banned}")
+                problems.append(f"{path.relative_to(SERVICE_DIR)} contains {banned}")
+        # The one allowed mention is the default UI address for CORS in config.py.
+        if "localhost" in text and path.name != "config.py":
+            problems.append(f"{path.relative_to(SERVICE_DIR)} contains localhost")
     assert problems == [], "\n".join(problems)

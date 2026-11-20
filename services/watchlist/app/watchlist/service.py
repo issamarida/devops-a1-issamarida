@@ -54,7 +54,7 @@ class WatchlistService:
             raise InvalidWatchlistItemError(str(error)) from None
         except sqlite3.IntegrityError:
             # The UNIQUE constraint on ticker rejected it
-            raise DuplicateTickerError(f"{ticker} is already on the watchlist.")
+            raise DuplicateTickerError(f"{ticker} is already on the watchlist.") from None
 
     def list_items(self) -> list[WatchlistItem]:
         return self.repository.list_all()

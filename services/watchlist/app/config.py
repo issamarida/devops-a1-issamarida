@@ -1,7 +1,10 @@
-"""Settings read from environment variables. Every one has a default."""
+"""Settings read from environment variables.
+
+Every setting has a default except the two secrets: TOKEN_SECRET must be set,
+and PRICE_API_KEY is optional (without it prices are simply unavailable).
+"""
 
 import os
-import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,16 +15,15 @@ class Config:
     port: int
     data_dir: Path
     price_api_key: str | None
-    poll_interval_seconds: int
     price_cache_ttl_seconds: int
-    secret_key: str
-    cookie_secure: bool = False
-    session_seconds: int = 3600
+    token_secret: str
+    cors_origins: list[str]
+    git_sha: str = "dev"
+    token_seconds: int = 3600
     auth_attempts: int = 5
     auth_window_seconds: int = 900
     max_accounts: int = 50
     max_watchlist_items: int = 30
-    max_alert_rules: int = 100
     quote_requests_per_minute: int = 50
     live_symbol_limit: int = 50
 
@@ -40,15 +42,9 @@ def read_int(name: str, default: str) -> int:
 
 
 def load_config() -> Config:
-    port = read_int("PORT", "8080")
+    port = read_int("PORT", "8001")
     if port < 1 or port > 65535:
         raise ValueError(f"PORT must be between 1 and 65535, got {port}")
-
-    poll_interval_seconds = read_int("POLL_INTERVAL_SECONDS", "5")
-    if poll_interval_seconds < 0:
-        raise ValueError(
-            f"POLL_INTERVAL_SECONDS must be 0 or more, got {poll_interval_seconds}"
-        )
 
     price_cache_ttl_seconds = read_int("PRICE_CACHE_TTL_SECONDS", "30")
     if price_cache_ttl_seconds < 0:
@@ -56,20 +52,23 @@ def load_config() -> Config:
             f"PRICE_CACHE_TTL_SECONDS must be 0 or more, got {price_cache_ttl_seconds}"
         )
 
-    secret_key = os.environ.get("SECRET_KEY") or secrets.token_urlsafe(32)
-    if len(secret_key) < 32:
-        raise ValueError("SECRET_KEY must contain at least 32 characters")
-    secure = os.environ.get("SESSION_COOKIE_SECURE", "false").lower()
-    if secure not in ("true", "false"):
-        raise ValueError("SESSION_COOKIE_SECURE must be true or false")
+    # A secret, so it has no default. Both services must be given the same value.
+    token_secret = os.environ.get("TOKEN_SECRET", "")
+    if len(token_secret) < 32:
+        raise ValueError("TOKEN_SECRET must be set to at least 32 characters")
+    # The only web pages allowed to call this service from a browser.
+    cors_origins = [
+        origin.strip().rstrip("/")
+        for origin in os.environ.get("CORS_ORIGINS", "http://localhost:8080").split(",")
+        if origin.strip()
+    ]
     limits = {}
     for name, default in (
-        ("SESSION_SECONDS", "3600"),
+        ("TOKEN_SECONDS", "3600"),
         ("AUTH_ATTEMPTS", "5"),
         ("AUTH_WINDOW_SECONDS", "900"),
         ("MAX_ACCOUNTS", "50"),
         ("MAX_WATCHLIST_ITEMS", "30"),
-        ("MAX_ALERT_RULES", "100"),
         ("QUOTE_REQUESTS_PER_MINUTE", "50"),
         ("LIVE_SYMBOL_LIMIT", "50"),
     ):
@@ -83,16 +82,16 @@ def load_config() -> Config:
         data_dir=Path(os.environ.get("DATA_DIR", "./data")),
         # An empty or whitespace-only key counts as not configured.
         price_api_key=os.environ.get("PRICE_API_KEY", "").strip() or None,
-        poll_interval_seconds=poll_interval_seconds,
         price_cache_ttl_seconds=price_cache_ttl_seconds,
-        secret_key=secret_key,
-        cookie_secure=secure == "true",
-        session_seconds=limits["SESSION_SECONDS"],
+        token_secret=token_secret,
+        cors_origins=cors_origins,
+        # The image build sets this to the commit it was built from.
+        git_sha=os.environ.get("GIT_SHA", "dev").strip() or "dev",
+        token_seconds=limits["TOKEN_SECONDS"],
         auth_attempts=limits["AUTH_ATTEMPTS"],
         auth_window_seconds=limits["AUTH_WINDOW_SECONDS"],
         max_accounts=limits["MAX_ACCOUNTS"],
         max_watchlist_items=limits["MAX_WATCHLIST_ITEMS"],
-        max_alert_rules=limits["MAX_ALERT_RULES"],
         quote_requests_per_minute=limits["QUOTE_REQUESTS_PER_MINUTE"],
         live_symbol_limit=limits["LIVE_SYMBOL_LIMIT"],
     )

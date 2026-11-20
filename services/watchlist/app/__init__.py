@@ -1,50 +1,57 @@
-"""create_app builds the Flask app.
+"""create_app builds the watchlist service: tracked assets, prices and accounts.
 
-This is the only file allowed to import more than one domain.
+This is the only file allowed to import more than one part of the service.
 """
 
 import logging
 import sqlite3
-from contextlib import closing
-from pathlib import Path
 
-from flask import Flask, g, redirect, url_for
+from flask import Flask, g
+from flask_cors import CORS
 
-from app.alerts.repository import AlertRepository
-from app.alerts.routes import create_alerts_blueprint
-from app.alerts.service import AlertService
 from app.config import Config
-from app.db import get_connection, init_db
+from app.db import check_database, init_db
+from app.errors import install_error_handlers
 from app.market.cache import CachedPriceSource
 from app.market.finnhub import FinnhubSource
 from app.market.info import MarketInfo
 from app.market.routes import create_market_blueprint
+from app.market.snapshot import create_snapshot_blueprint
 from app.market.stream import FinnhubStream, LivePrices
 from app.request_log import install_request_log
 from app.security import install_access
 from app.watchlist import SCHEMA_PATH as WATCHLIST_SCHEMA
-from app.watchlist.repository import WatchlistRepository, most_watched_tickers
+from app.watchlist.repository import (
+    WatchlistRepository,
+    most_watched_tickers,
+    tickers_by_owner,
+)
 from app.watchlist.routes import create_watchlist_blueprint
 from app.watchlist.service import WatchlistService
 
 logger = logging.getLogger(__name__)
 
 # Every schema file init_db runs. tests/conftest.py uses this same list.
-SCHEMA_FILES = [
-    WATCHLIST_SCHEMA,
-    Path(__file__).parent / "alerts" / "schema.sql",
-]
+SCHEMA_FILES = [WATCHLIST_SCHEMA]
 
 
 def create_app(config: Config, *, price_source=None) -> Flask:
     init_db(config.db_path, SCHEMA_FILES)
 
     app = Flask(__name__)
-    app.secret_key = config.secret_key
 
     # First, so its line is written last and shows the final status.
     install_request_log(app)
-    access = install_access(app, config)
+    install_error_handlers(app)
+    # Only the UI's own address may call this service from a browser. The two
+    # headers are the ones the UI sends: JSON bodies and the sign-in token.
+    CORS(
+        app,
+        origins=config.cors_origins,
+        allow_headers=["Content-Type", "Authorization"],
+        max_age=600,
+    )
+    install_access(app, config)
 
     # Tests inject an offline fake. At runtime every price comes from Finnhub:
     # streamed trades first, the REST quote when no recent trade exists.
@@ -73,82 +80,34 @@ def create_app(config: Config, *, price_source=None) -> Flask:
             WatchlistRepository(config.db_path, owner_id, config.max_watchlist_items)
         )
 
-    def alerts_for(owner_id):
-        return AlertService(
-            AlertRepository(config.db_path, owner_id, config.max_alert_rules),
-            price_source,
-            watchlist_for(owner_id),
-        )
+    app.extensions["watchlist_for"] = watchlist_for
 
     app.register_blueprint(
         create_watchlist_blueprint(lambda: watchlist_for(g.user["id"]))
     )
-    app.register_blueprint(create_alerts_blueprint(lambda: alerts_for(g.user["id"])))
-    def alert_summary():
-        alerts = alerts_for(g.user["id"])
-        events = alerts.list_events()
-        return {
-            "event_count": alerts.count_events(),
-            "latest": events[0] if events else None,
-        }
-
     app.register_blueprint(
         create_market_blueprint(
             lambda: [item.ticker for item in watchlist_for(g.user["id"]).list_items()],
             price_source,
             info,
-            alert_summary,
+        )
+    )
+    # The other side of the seam: the alerts service reads this over HTTP.
+    app.register_blueprint(
+        create_snapshot_blueprint(
+            lambda: tickers_by_owner(config.db_path), price_source
         )
     )
 
-    class AllAccounts:
-        def evaluate_all(self):
-            fired = []
-            for owner_id in access.account_ids():
-                try:
-                    fired.extend(alerts_for(owner_id).evaluate_all())
-                except Exception:
-                    logger.exception("Alert check failed for an account")
-            return fired
-
-    app.extensions["alert_service"] = AllAccounts()
-    app.extensions["alerts_for"] = alerts_for
-    app.extensions["watchlist_for"] = watchlist_for
-
-    @app.context_processor
-    def workspace_context():
-        if not g.user:
-            return {}
-        items = watchlist_for(g.user["id"]).list_items()
-        alerts = alerts_for(g.user["id"])
-        rules = alerts.list_rules()
-        return {
-            "asset_count": len(items),
-            "watched_tickers": [item.ticker for item in items],
-            "active_count": sum(rule["status"] == "active" for rule in rules),
-            "dormant_count": sum(rule["status"] == "dormant" for rule in rules),
-            "event_count": alerts.count_events(),
-            "poll_interval": config.poll_interval_seconds,
-        }
-
-    @app.get("/")
-    def index():
-        return redirect(url_for("watchlist.list_items"))
-
     @app.get("/health")
     def health():
-        # Reads each table once. Fails if the file or a table is missing.
+        # About this service's own database only, never about the alerts service.
         try:
-            with closing(get_connection(config.db_path)) as conn:
-                conn.execute("SELECT 1 FROM watchlist_items LIMIT 1").fetchone()
-                conn.execute("SELECT 1 FROM alert_rules LIMIT 1").fetchone()
-                conn.execute("SELECT 1 FROM alert_events LIMIT 1").fetchone()
-                conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone()
-                conn.execute("SELECT 1 FROM rate_limits LIMIT 1").fetchone()
+            check_database(config.db_path)
         except sqlite3.Error:
             # The details go to the log only, never into the response.
             logger.exception("Health check failed")
-            return {"status": "error"}, 503
-        return {"status": "ok"}, 200
+            return {"status": "error", "db": "error", "version": config.git_sha}, 503
+        return {"status": "ok", "db": "ok", "version": config.git_sha}, 200
 
     return app

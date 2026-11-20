@@ -87,3 +87,18 @@ def most_watched_tickers(db_path) -> list[str]:
             GROUP BY ticker ORDER BY COUNT(*) DESC, ticker"""
         ).fetchall()
     return [row["ticker"] for row in rows]
+
+
+def tickers_by_owner(db_path) -> dict[str, list[str]]:
+    """Each account's tickers, for the snapshot the alerts service asks for.
+
+    The keys are account IDs as text because JSON object keys are always text.
+    """
+    with closing(get_connection(db_path)) as conn:
+        rows = conn.execute(
+            "SELECT owner_id, ticker FROM watchlist_items WHERE owner_id != 0 ORDER BY owner_id, ticker"
+        ).fetchall()
+    owners = {}
+    for row in rows:
+        owners.setdefault(str(row["owner_id"]), []).append(row["ticker"])
+    return owners
