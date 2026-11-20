@@ -20,6 +20,7 @@ from app.market.finnhub import FinnhubSource
 from app.market.info import MarketInfo
 from app.market.routes import create_market_blueprint
 from app.market.stream import FinnhubStream, LivePrices
+from app.request_log import install_request_log
 from app.security import install_access
 from app.watchlist import SCHEMA_PATH as WATCHLIST_SCHEMA
 from app.watchlist.repository import WatchlistRepository, most_watched_tickers
@@ -41,6 +42,8 @@ def create_app(config: Config, *, price_source=None) -> Flask:
     app = Flask(__name__)
     app.secret_key = config.secret_key
 
+    # First, so its line is written last and shows the final status.
+    install_request_log(app)
     access = install_access(app, config)
 
     # Tests inject an offline fake. At runtime every price comes from Finnhub:

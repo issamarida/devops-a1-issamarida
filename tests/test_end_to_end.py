@@ -318,3 +318,62 @@ def test_search_and_details_need_a_session_and_details_only_own_tickers(api_clie
     assert client.get("/api/search?q=AAPL").get_json() == {"results": []}
     assert client.get("/api/details/aapl").get_json() == {"ticker": "AAPL", "details": None}
     assert client.get("/api/details/TSLA").status_code == 404
+
+
+# The watchlist does not answer. Assignment 2 puts it behind a network call.
+
+
+@pytest.fixture
+def stop_watchlist(monkeypatch):
+    """Returns a function. After it is called every watched check fails."""
+    from app.ports import WatchlistUnavailable
+    from app.watchlist.service import WatchlistService
+
+    def is_watched(self, ticker):
+        raise WatchlistUnavailable("The watchlist service did not answer")
+
+    return lambda: monkeypatch.setattr(WatchlistService, "is_watched", is_watched)
+
+
+def test_alerts_page_still_loads_when_the_watchlist_is_down(client, stop_watchlist):
+    add_aapl_with_rule(client)
+    stop_watchlist()
+
+    text = page(client.get("/alerts"))
+
+    assert "The watchlist can't be reached right now." in text
+    assert '<span class="badge unknown">unknown</span></td>' in text
+    assert "Traceback" not in text
+
+
+def test_new_rule_is_refused_with_a_clear_message_when_the_watchlist_is_down(
+    client, stop_watchlist
+):
+    stop_watchlist()
+
+    text = page(
+        post_form(
+            client,
+            "/alerts",
+            data={"ticker": "AAPL", "condition": "above", "threshold": "150"},
+            follow_redirects=True,
+        )
+    )
+
+    assert "so the rule was not saved. Try again in a moment." in text
+    assert "0 rules" in text
+
+
+def test_check_is_skipped_and_nothing_fires_when_the_watchlist_is_down(
+    client, prices, stop_watchlist
+):
+    add_aapl_with_rule(client)
+    stop_watchlist()
+    prices.price = 10_000.0  # far above any threshold, so the rule would fire
+
+    text = page(post_form(client, "/alerts/evaluate", follow_redirects=True))
+
+    assert "so the check did not finish." in text
+    assert "fired." not in text
+    assert "No rule has fired yet." in text
+    assert '<span class="badge unknown">unknown</span></td>' in text
