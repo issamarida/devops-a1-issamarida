@@ -1,0 +1,37 @@
+# Runs on every push and every pull request (Assignment 2 brief, section 5).
+# Each service is installed, linted and tested on its own, from its own folder.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# The workflow only reads the code. It gets no other access to the repository.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Lint and test ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Show the result for both services even when one of them fails.
+      fail-fast: false
+      matrix:
+        service: [watchlist, alerts]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      # Actions are pinned to a commit, so a moved tag cannot change what runs here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Install this service's dependencies
+        run: pip install -r requirements.txt
+      - name: Lint
+        run: ruff check .
+      # .coveragerc in the service folder fails the run below 70% coverage.
+      - name: Test with coverage
+        run: pytest --cov --cov-report=term-missing
