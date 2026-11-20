@@ -1,0 +1,11 @@
+# Lint settings for both services. CI runs "ruff check" in each service folder.
+line-length = 100
+
+[lint]
+# E and F: syntax errors, undefined names and unused imports.
+# I: import order. B: common bug patterns.
+select = ["E4", "E7", "E9", "F", "I", "B"]
+
+[lint.isort]
+# Each service's own package is called "app". "conftest" is the test helpers.
+known-first-party = ["app", "conftest"]
