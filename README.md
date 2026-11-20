@@ -1,115 +1,194 @@
 # Stock watchlist and price alerts
 
-A small web app for retail investors who follow US stocks and want private watchlists and a record of price conditions being met. It monitors prices; it does not place trades or send email/push notifications.
+An app for retail investors who follow US stocks. Each investor keeps a private watchlist and sets price rules that fire once and leave a record. It monitors prices. It does not place trades or send email or push notifications.
 
-There are **two business domains**: `app/watchlist` owns tracked assets and notes; `app/alerts` owns one-shot rules and trigger history. Authentication is supporting access control in `app/security.py`, not another business feature. Everything runs in **one Python process**: waitress, a daemon thread that checks alert rules, two daemon threads that hold one live connection to Finnhub, and one SQLite file.
+Assignment 1 was one Flask process with one SQLite file. Assignment 2 splits it into two services along the seam from ADR-2 and ADR-6:
 
-## Run locally
+| Service | Folder | Owns | Default port |
+|---|---|---|---|
+| watchlist | `services/watchlist` | tracked assets, Finnhub prices, accounts and sign in | 8001 |
+| alerts | `services/alerts` | price rules, trigger history, the background check | 8002 |
 
-Python 3.10 or newer; verified with Python 3.14.7. From a clone of this repository:
+The alerts service calls the watchlist service over HTTP. The watchlist service never calls alerts. The static UI in `ui/` will call both from the browser.
+
+## Status
+
+Assignment 2 is in progress. This table is kept honest against the brief.
+
+| Brief section | State |
+|---|---|
+| 1a Two services, own folders, own manifests | Done |
+| 1a HTTP between services through an environment variable | Done |
+| 3 Cross-seam flow on the server side, timeout on every call | Done |
+| 3 Partial failure handled in a designed way | Done in the API. The UI part is not built yet |
+| 3 `/health` with status, db and version, one log line per request | Done |
+| 1a CORS only from the UI's origin, in code | Done |
+| 5 CI: lint, tests and coverage per service | Done. Schema validation and image builds are not added yet |
+| 1a SQL Server and one database per service | Not yet. Each service still uses its own SQLite file |
+| 4 Versioned migrations | Not yet |
+| 1a Dockerfiles and `docker compose up --build` | Not yet |
+| 1a Static UI in `ui/` | Not yet. `ui/` still holds the Assignment 1 Jinja templates as the starting point |
+| 5 and 7 CD and the Azure deployment | Not yet |
+| 8a `openapi.yaml` per service and `system.yaml` | Not yet. `system.schema.json` is in place |
+
+## Run the two services
+
+Python 3.14. One virtual environment can serve both services while working locally.
 
 ```sh
 uv venv
 source .venv/bin/activate.fish
-uv pip install -r requirements.txt
-python app.py
+uv pip install -r services/watchlist/requirements.txt
+uv pip install -r services/alerts/requirements.txt
 ```
 
-For bash/zsh use `source .venv/bin/activate` instead. Plain pip also works: `python -m venv .venv`, activate it, then `python -m pip install -r requirements.txt`.
+Both services need the same `TOKEN_SECRET`, at least 32 characters. It is a secret, so it has no default and is never written in this repository. Make one up for your own machine:
 
-Open http://localhost:8080. Create an account in the browser, then sign in. There are no default credentials and no interactive server setup. Tables and compatible schema upgrades run automatically at startup. `GET /health` is public and returns 200 only when all five tables can be read.
+```sh
+set -x TOKEN_SECRET (python -c "import secrets; print(secrets.token_urlsafe(48))")
+```
 
-Every price comes from Finnhub. A free key from finnhub.io is enough. Either set it in your shell before starting the app, for example `set -x PRICE_API_KEY your-key` in fish or `export PRICE_API_KEY=your-key` in bash, or put the line `PRICE_API_KEY=your-key` in a `.env` file next to `app.py`. `.env` is git-ignored and optional. A variable already set in the shell always wins over the file. To try it, add AAPL to your watchlist, create an **above 1.00** rule, and select **Check rules now**. The real AAPL price is above 1, so it fires once. Repeat the check to confirm there is no second event.
+Then start each service from its own folder, in two terminals that share that variable:
 
-## Live prices
+```sh
+cd services/watchlist; python app.py
+cd services/alerts; env WATCHLIST_URL=http://localhost:8001 python app.py
+```
 
-While US markets are open, prices tick in the watchlist and the alert rules table, and the status pill in the top right reads **Live**.
+To run a single service, start only that one. The watchlist service does not need alerts at all. The alerts service starts and serves its own data without the watchlist, as described under "When the watchlist is down".
 
-1. At startup `app.py` opens one WebSocket connection from the server to `wss://ws.finnhub.io` and subscribes to every ticker any account watches, most watched first, up to `LIVE_SYMBOL_LIMIT`. New tickers are picked up within a few seconds; removed ones are unsubscribed.
-2. Each trade Finnhub pushes is kept in memory as the latest price for that ticker.
-3. Each page polls `GET /api/quotes` on this server every second. The endpoint needs a signed-in session and only returns the account's own tickers. It returns the latest trade, or the REST quote when no trade has arrived in the last minute (markets closed, quiet ticker), plus the change since the previous close, the day open, high and low, and up to 20 minutes of streamed trade prices for the sparkline. It also returns the US market session and the account's newest alert event, so a rule fired by the background poller shows up on screen within a second.
-4. The alert poller uses the same prices, so a rule fires on a live trade within one `POLL_INTERVAL_SECONDS` interval.
-5. `GET /api/search?q=` suggests US tickers in the add form and fills in the company name. `GET /api/details/<ticker>` returns industry, market cap and the 52 week range, only for tickers on the account's own watchlist.
+Prices come from Finnhub. Set `PRICE_API_KEY` for the watchlist service to get them. Without a key the service still runs and every price is reported as unavailable. No price is ever made up.
 
-The dashboard shows each asset's live price, today's change, a sparkline of recent trades, the day range and the 52 week range, plus how many assets are up or down. Finnhub's candle endpoint is not on the free plan, so the sparkline is built from the trades this server streams. Market status is cached for a minute, search for an hour and company details for six hours. These extra calls never use the last 10 calls of the per minute budget, so quotes for alerts always have room.
+## API
 
-The browser never talks to Finnhub and never receives the key. The Content Security Policy only allows the page's own inline script and requests back to this server. The REST adapter sends the key in a header; the WebSocket needs it in the URL, which is never logged, and a log filter masks the key in every log line as a second safeguard. A dropped connection is retried after 1, 2, 4 and up to 60 seconds. If no key is set, the app still starts and serves the watchlist and rules, prices show as a dash, the pill reads Offline and the log says which setting is missing. No price is ever made up.
+Every request and answer is JSON. Errors are always `{"error": "..."}`. Apart from `/health` and the two `/auth` endpoints, a request needs the header `Authorization: Bearer <token>` with the token from sign in.
 
-The official finnhub-python SDK was considered. It only wraps the REST API and puts the key in the URL query string, so the app keeps its own small REST adapter and uses `websocket-client` for the stream.
+**watchlist**
 
-## Audience and boundaries
+| Method and path | What it does |
+|---|---|
+| `GET /health` | 200 with `status`, `db` and `version`, or 503 |
+| `POST /auth/register` | Create an account |
+| `POST /auth/login` | Answer with a signed token that lasts `TOKEN_SECONDS` |
+| `GET /watchlist` | The account's assets |
+| `POST /watchlist` | Add an asset: 201, 400 if invalid, 409 if already there |
+| `DELETE /watchlist/<ticker>` | Remove an asset: 204 or 404 |
+| `GET /api/quotes` | Live prices for the account's assets, and the market session |
+| `GET /api/search?q=` | Ticker suggestions |
+| `GET /api/details/<ticker>` | Company details for an asset on the watchlist |
+| `GET /internal/snapshot?tickers=` | For the alerts service only: who watches what, and the asked prices |
 
-The intended audience is independent retail investors checking a few US stocks on a desktop or phone. Each person has a private account; one person's assets never activate another person's rules. The initial use is a local course demonstration or a small controlled pilot. Assignment 1 does not deploy the app publicly.
+**alerts**
 
-Default resource bounds are 50 accounts, 30 tracked assets per account and 100 retained rules per account. These are storage/abuse limits, **not a throughput claim**. Live monitoring should stay within 30 distinct active tickers across the instance at the default quote budget. A shared cache helps overlapping watchlists. Extra quotes are skipped and retried on subsequent checks; this is not guaranteed real-time monitoring. A run waits for quotes, then waits the configured polling interval, so a slow API extends the time between checks.
+| Method and path | What it does |
+|---|---|
+| `GET /health` | 200 with `status`, `db` and `version`, or 503 |
+| `GET /alerts` | The account's rules with a status, and `watchlist_available` |
+| `POST /alerts` | Add a rule: 201, 400 if invalid, 503 if the watchlist can't be reached |
+| `DELETE /alerts/<id>` | Delete a rule: 204 or 404. Its history stays |
+| `GET /alerts/events` | The latest 100 trigger events and the total count |
+| `POST /alerts/evaluate` | Check the account's rules now: 200 with what fired, or 503 |
 
-No brokerage integration, trading, portfolio valuation, password recovery, MFA, account deletion or external notification service is included. Fired alerts appear in the trigger history when you revisit or refresh. Outside market hours the last REST quote is shown and no trades stream. A rule tests the observed price, not whether a crossing occurred between two samples.
+## The seam, and when the watchlist is down
+
+The alerts service needs two facts it does not own: is this ticker on the account's watchlist, and what does it cost now. It gets both from one request to `GET /internal/snapshot` on the watchlist service.
+
+- The address comes from `WATCHLIST_URL`. No hostname is written in the code.
+- Every call has a timeout, `WATCHLIST_TIMEOUT_SECONDS`.
+- Listing and creating rules ask who watches what. Only a check also asks for prices, and only for tickers that have an active rule.
+- The background check makes one request per run for all accounts, and none when no rule is active.
+
+When the watchlist service is stopped, too slow or answers nonsense:
+
+| Request to alerts | Answer |
+|---|---|
+| `GET /alerts` | 200. Open rules get the status `unknown` and `watchlist_available` is `false` |
+| `POST /alerts` | 503 with "The watchlist can't be reached right now, so the rule was not saved. Try again in a moment." |
+| `POST /alerts/evaluate` | 503. No rule fires on a price nobody could confirm |
+| history, delete, `/health` | Unchanged. They only use the alerts service's own data |
+
+The background check skips that run and logs one warning. Every rule stays active and is checked again on the next run.
+
+## Sign in and access
+
+- The watchlist service holds the accounts. Passwords are salted and hashed with scrypt and must be 15 to 128 characters.
+- Sign in answers with a JSON Web Token signed with `TOKEN_SECRET` (HS256). It holds the account ID, the username and an expiry time. There are no cookies and no server-side sessions.
+- Both services check the token's signature themselves. The alerts service never calls the watchlist to learn who is asking, so it keeps working when the watchlist is stopped.
+- A token cannot be withdrawn before it expires. That is the cost of keeping no session state, and why the default lifetime is one hour.
+- Every query uses the account ID from the token. An account ID sent in a request body is ignored.
+- `/internal/snapshot` only opens for a one-minute token with the `snapshot` scope, which the alerts service signs with the same secret.
+- Sign-in attempts and registrations are rate limited in the watchlist database, so the limits survive a restart.
+- Each service allows browser requests from the addresses in `CORS_ORIGINS` only.
 
 ## Configuration
 
-All settings come from optional environment variables. No `.env` file or source edit is required. `app.py` reads a `.env` file next to it if one exists, using a few lines of standard library code, and never overrides a variable that is already set.
+Every setting is an environment variable. Each service also reads an optional git-ignored `.env` file in its own folder. A variable set in the shell always wins.
+
+**watchlist**
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `HOST` | `0.0.0.0` | Bind address |
-| `PORT` | `8080` | Integer from 1 to 65535 |
-| `DATA_DIR` | `./data` | SQLite path is `$DATA_DIR/app.db` |
-| `PRICE_API_KEY` | unset | Finnhub key, used for the live stream and REST quotes |
-| `POLL_INTERVAL_SECONDS` | `5` | Wait between alert checks; 0 disables automatic checks |
-| `PRICE_CACHE_TTL_SECONDS` | `30` | Cache live quotes; 0 disables reuse |
-| `QUOTE_REQUESTS_PER_MINUTE` | `50` | Shared rolling limit on all outbound REST requests; Finnhub's free plan allows 60 |
-| `LIVE_SYMBOL_LIMIT` | `50` | Most tickers streamed at once; Finnhub's free plan allows 50 |
-| `SECRET_KEY` | random at startup | Session signing secret; an explicit value needs at least 32 characters |
-| `SESSION_COOKIE_SECURE` | `false` | `true` for HTTPS; `false` permits local HTTP |
-| `SESSION_SECONDS` | `3600` | Absolute session lifetime, in seconds |
-| `AUTH_ATTEMPTS` | `5` | Login attempts per username and registrations per IP per window |
-| `AUTH_WINDOW_SECONDS` | `900` | Authentication rate-limit window |
-| `MAX_ACCOUNTS` | `50` | Registration capacity |
-| `MAX_WATCHLIST_ITEMS` | `30` | Per-account asset limit |
-| `MAX_ALERT_RULES` | `100` | Per-account rule limit, including fired rules |
+| `PORT` | `8001` | Port the service listens on |
+| `DATA_DIR` | `./data` | Folder for the SQLite file, until SQL Server replaces it |
+| `TOKEN_SECRET` | none, required | Secret that signs the tokens. The same value in both services |
+| `PRICE_API_KEY` | none | Finnhub key. A secret. Without it prices are unavailable |
+| `CORS_ORIGINS` | `http://localhost:8080` | The UI's address. A comma-separated list is allowed |
+| `GIT_SHA` | `dev` | The commit the service was built from, shown by `/health` |
+| `TOKEN_SECONDS` | `3600` | How long a sign-in token lasts |
+| `PRICE_CACHE_TTL_SECONDS` | `30` | How long a REST quote is reused |
+| `QUOTE_REQUESTS_PER_MINUTE` | `50` | Budget for calls to Finnhub. Its free plan allows 60 |
+| `LIVE_SYMBOL_LIMIT` | `50` | Most tickers streamed at once |
+| `AUTH_ATTEMPTS` | `5` | Sign-in attempts per username, and registrations per address, per window |
+| `AUTH_WINDOW_SECONDS` | `900` | Length of that window |
+| `MAX_ACCOUNTS` | `50` | Most accounts |
+| `MAX_WATCHLIST_ITEMS` | `30` | Most assets per account |
 
-The login IP limit is five times `AUTH_ATTEMPTS`. Authenticated POSTs are limited to 60 per minute per account; manual evaluation is additionally limited to four per minute. Forms are limited to 16 KiB and 12 multipart fields. Names are limited to 100 characters and notes to 500. These small fixed HTTP/input bounds are defined in code; the operating limits above are configurable.
+**alerts**
 
-Invalid configuration stops startup with a message naming the setting. The API key never reaches the browser and is never logged. A random default signing key means server restarts require signing in again. Set a strong stable `SECRET_KEY` when session continuity is needed.
+| Variable | Default | Meaning |
+|---|---|---|
+| `HOST` | `0.0.0.0` | Bind address |
+| `PORT` | `8002` | Port the service listens on |
+| `DATA_DIR` | `./data` | Folder for the SQLite file, until SQL Server replaces it |
+| `TOKEN_SECRET` | none, required | The same secret as the watchlist service |
+| `WATCHLIST_URL` | `http://watchlist:8001` | Base address of the watchlist service |
+| `WATCHLIST_TIMEOUT_SECONDS` | `3` | Timeout for each call to the watchlist. At most 30 |
+| `POLL_INTERVAL_SECONDS` | `15` | Wait between background checks. 0 turns them off |
+| `CORS_ORIGINS` | `http://localhost:8080` | The UI's address |
+| `GIT_SHA` | `dev` | The commit the service was built from, shown by `/health` |
+| `MAX_ALERT_RULES` | `100` | Most rules per account, fired ones included |
 
-## Access control and safety
-
-- Passwords are salted and hashed with Werkzeug's scrypt implementation. Passwords must contain 15–128 characters; password managers and passphrases work.
-- A signed, HttpOnly, SameSite=Lax cookie contains the account ID and a random session token. SQLite stores only its SHA-256 digest and expiry. Signing out revokes it; signing in again replaces the previous session, so one account has one active session.
-- Every POST, including registration, login and logout, requires a session-bound CSRF token. Successful login clears the old session and token.
-- SQLite rate limits reserve attempts atomically and survive process restarts. HTTP 429 includes `Retry-After`. Unknown usernames and incorrect passwords use the same login error and password-hash check.
-- Repository queries always use the authenticated account ID supplied by the composition root. Submitted account IDs are ignored. Domain tables have no foreign keys to the account table and no cross-domain joins.
-- Templates escape user content. A nonce-based Content Security Policy allows only the page's own script, limits fetch requests to this server and blocks framing. Responses prevent MIME sniffing and private-page caching. No third-party frontend assets are loaded.
-
-For Assignment 2, HTTPS, `SESSION_COOKIE_SECURE=true`, a strong signing secret, a persistent data volume and network access restrictions are prerequisites. Proxy headers are deliberately not trusted; behind a proxy the IP limiter may group clients together. Configure trusted proxy handling only once the actual deployment topology is known. Application rate limiting does not replace network-level abuse protection.
-
-## Domain behaviour and existing databases
-
-Ticker matching is uppercase and case-insensitive at the service boundary. Duplicates are rejected **within an account**. Rules trigger strictly above or below the threshold; equality does not trigger. Firing deactivates the rule and records its event in the same transaction. A random generation token prevents stale evaluations from firing a new rule after SQLite reuses an ID.
-
-Removing a ticker leaves its active rules **dormant**. Adding it back resumes them. Deleting a rule preserves event snapshots and sets `rule_id` to NULL. The UI shows the latest 100 events; older history stays in SQLite and the summary count includes it. A ticker without a fresh price is skipped and its rules stay active for the next check. Manual checks say how many tickers were skipped without exposing provider details.
-
-Startup automatically upgrades the previous three-table shared schema. Existing rows keep their IDs, values and relationships under reserved `owner_id=0`; nobody can sign in as that owner, and its rules are not polled. The first registrant does **not** receive old private data. New accounts begin empty. Assigning legacy records requires a future deliberate administrative migration after ownership is established; there is no automatic claiming mechanism.
+A wrong value stops the service at start with a message that names the variable.
 
 ## Tests
 
+Each service has its own tests and its own coverage gate. Run them from the service's folder:
+
 ```sh
-pytest
-pytest --cov=app --cov-report=term-missing
+cd services/watchlist; pytest --cov
+cd services/alerts; pytest --cov
+ruff check services
 ```
 
-The coverage configuration measures services, repositories, rules, price adapters, configuration, database upgrades, polling and access control. Only domain route files and the composition root are excluded as framework wiring. Coverage below 70% fails the run. All quote calls and the WebSocket are faked in tests; the contract test uses local loopback HTTP only.
+Verified on 20 November 2026: watchlist 222 tests and alerts 201 tests, both at 100% statement coverage of their measured modules. Coverage below 70% fails the run. As in Assignment 1 the thin route files and `create_app` are left out of the measure and are exercised through the API tests instead.
 
-Verified on 4 October 2026: **240 tests passed; 100% statement coverage across 868 statements** in the measured modules. Tests include market status, search and company details caching, the shared call budget, the optional `.env` file, sparkline points, the WebSocket subscribe/unsubscribe cycle, malformed stream messages, reconnect backoff, key redaction, the `/api/quotes` ownership check, concurrent one-shot firing, deletion/ID reuse, rollback, private ownership, dormant rules, malformed quotes, cache expiry, quotas, password hashing, CSRF, session revocation/expiry, throttling and automatic legacy upgrades. Statement coverage does not prove every possible input or race is safe.
+No test touches the internet. Finnhub is mocked. The cross-seam tests in `services/alerts/tests` replace the watchlist service with `StubWatchlist`, a real HTTP server on localhost that checks the service token as the real one does. The tests stop it, slow it down and make it answer nonsense to prove the answers in the table above.
 
-Browser verification covers registration, login, adding assets, firing alerts, prices ticking on both pages, and layouts at 1440, 1024, 768 and 390 pixels. The interface uses Jinja templates, local CSS, labelled controls and keyboard focus styles, with horizontally scrollable tables on small screens.
+CI in `.github/workflows/ci.yml` runs the linter and both test suites on every push and pull request.
 
-## Architecture and delivery
+## Rules of the domain
 
-`app/__init__.py` is the only composition root. It supplies owner-scoped `WatchlistService` and `AlertService` instances to request handlers. Alerts depends on neutral `WatchlistReader` and `PriceSource` protocols, never the watchlist or market modules. The poller and the Finnhub stream are started only by `app.py`; create_app builds them but never opens a connection. The poller creates account-scoped evaluations through the composition root. Connections are short-lived and never shared across threads. SQLite uses its default journal mode.
+- Tickers are stored in upper case. A ticker can be on an account's watchlist once.
+- A rule fires when the price is strictly above or below its threshold. A price equal to the threshold does not fire it.
+- A rule fires once. Firing deactivates it and writes the history row in the same transaction.
+- Removing a ticker from the watchlist leaves its rules dormant. Adding it back resumes them.
+- Deleting a rule keeps its history.
+- A ticker with no fresh price is skipped and its rules stay active.
 
-`requirements.txt` is the sole dependency manifest, with seven direct packages. There is no Dockerfile, Compose file, CI workflow, IaC or public deployment. The repository is slightly above the suggested 50-file range because access control, its template/tests and a printable report are explicit artefacts; this is a soft cap.
+## Documents
 
-Branch flow is **`feature/*` or `fix/*` → `develop` → `main`**. `develop` gathers tested features; `main` contains a reviewed release. Run the complete suite before integration and release. Branches are not a substitute for genuine work across days or remote push evidence.
-
-See `ADR.md`, `docs/REPORT.md`, the printable `docs/REPORT.pdf`, and `docs/diagrams/` for decisions and diagrams. `AI_USAGE.md` remains the detailed disclosure log. Its outstanding personal explanations must be completed by the author; they are part of the assessment, alongside professor approval of the use case and the closed-book comprehension check.
+- `ADR.md`: the decisions, including ADR-6 on the split.
+- `AI_USAGE.md`: every AI session and what it produced.
+- `docs/`: the Assignment 1 report and diagrams. The Assignment 2 report will replace them.
+- `system.schema.json`: the course's schema for `system.yaml`, unchanged.
