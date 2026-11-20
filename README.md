@@ -24,9 +24,9 @@ Assignment 2 is in progress. This table is kept honest against the brief.
 | 3 `/health` with status, db and version, one log line per request | Done |
 | 1a CORS only from the UI's origin, in code | Done |
 | 5 CI: lint, tests and coverage per service | Done. Schema validation and image builds are not added yet |
-| 1a SQL Server and one database per service | Not yet. Each service still uses its own SQLite file |
+| 1a SQL Server and one database per service | Started. Compose starts SQL Server and `db/init.sql` creates the two databases and logins. The services still use their own SQLite file |
 | 4 Versioned migrations | Not yet |
-| 1a Dockerfiles and `docker compose up --build` | Not yet |
+| 1a Dockerfiles and `docker compose up --build` | Started. `docker-compose.yml` starts the database side only. No Dockerfiles yet |
 | 1a Static UI in `ui/` | Not yet. `ui/` still holds the Assignment 1 Jinja templates as the starting point |
 | 5 and 7 CD and the Azure deployment | Not yet |
 | 8a `openapi.yaml` per service and `system.yaml` | Not yet. `system.schema.json` is in place |
@@ -58,6 +58,26 @@ cd services/alerts; env WATCHLIST_URL=http://localhost:8001 python app.py
 To run a single service, start only that one. The watchlist service does not need alerts at all. The alerts service starts and serves its own data without the watchlist, as described under "When the watchlist is down".
 
 Prices come from Finnhub. Set `PRICE_API_KEY` for the watchlist service to get them. Without a key the service still runs and every price is reported as unavailable. No price is ever made up.
+
+## The local SQL Server
+
+`docker-compose.yml` starts one SQL Server container that holds one database per service. The services are not connected to it yet, so this part is the groundwork for the move away from SQLite.
+
+```sh
+docker compose up -d
+sh db/check-logins.sh
+```
+
+| Compose service | What it does |
+|---|---|
+| `secrets` | Runs once. Makes up the local passwords on the first start and keeps them in the `local-secrets` volume |
+| `db` | SQL Server 2022. Its data is in the `db-data` volume and survives `docker compose down` |
+| `db-init` | Runs `db/init.sql` on every start. Creates the `watchlist` and `alerts` databases and one login for each, if they are missing |
+
+- No password is written in this repository, not even a local one. `db/make-secrets.sh` makes them up on your machine.
+- `db/init.sql` checks before it creates, so running it again changes nothing.
+- `watchlist_user` has a user in the `watchlist` database only, and `alerts_user` in `alerts` only. `db/check-logins.sh` proves each login opens its own database and is refused on the other. CI runs it on every push.
+- `docker compose down -v` deletes both volumes, which deletes the data and the passwords. It is never needed to restart or rebuild.
 
 ## API
 
@@ -175,7 +195,7 @@ Verified on 20 November 2026: watchlist 222 tests and alerts 201 tests, both at 
 
 No test touches the internet. Finnhub is mocked. The cross-seam tests in `services/alerts/tests` replace the watchlist service with `StubWatchlist`, a real HTTP server on localhost that checks the service token as the real one does. The tests stop it, slow it down and make it answer nonsense to prove the answers in the table above.
 
-CI in `.github/workflows/ci.yml` runs the linter and both test suites on every push and pull request.
+CI in `.github/workflows/ci.yml` runs the linter and both test suites on every push and pull request. A third job starts the compose database, runs `db/init.sql` twice and runs `db/check-logins.sh`.
 
 ## Rules of the domain
 

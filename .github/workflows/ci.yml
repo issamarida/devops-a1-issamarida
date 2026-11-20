@@ -1,5 +1,7 @@
 # Runs on every push and every pull request (Assignment 2 brief, section 5).
 # Each service is installed, linted and tested on its own, from its own folder.
+# The database job starts the local SQL Server from docker-compose.yml.
+# Nothing here connects to Azure.
 name: CI
 
 on:
@@ -35,3 +37,23 @@ jobs:
       # .coveragerc in the service folder fails the run below 70% coverage.
       - name: Test with coverage
         run: pytest --cov --cov-report=term-missing
+
+  database:
+    name: Local databases and logins
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The same commands a clean clone uses. The passwords are made up inside
+      # the job by the compose file, so the workflow holds no database password.
+      - name: Start SQL Server
+        run: docker compose up -d --wait db
+      - name: Create the databases and logins
+        run: docker compose run --rm db-init
+      # db/init.sql runs on every start, so a second run must succeed and change nothing.
+      - name: Run db/init.sql a second time
+        run: docker compose run --rm db-init
+      - name: Each login opens its own database only
+        run: sh db/check-logins.sh
+      - name: Show the SQL Server log if a step failed
+        if: failure()
+        run: docker compose logs db
