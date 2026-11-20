@@ -1,13 +1,10 @@
 """The alerts side of the seam: one HTTP request to the watchlist, with a timeout.
 
 The unit tests mock requests.get. The cross-seam tests at the bottom replace the
-watchlist service with a stub: a real HTTP server on localhost.
+watchlist service with a stub: a real HTTP server on localhost (tests/conftest.py).
 """
 
-import json
-import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest.mock import Mock, patch
 
 import pytest
@@ -21,13 +18,11 @@ from app.alerts.watchlist_client import (
     fetch_snapshot,
 )
 from app.ports import PriceUnavailable, WatchlistUnavailable
+from app.tokens import issue_service_token
+from conftest import ANSWER, TEST_TOKEN_SECRET
 
-BASE_URL = "http://watchlist:8080"
+BASE_URL = "http://watchlist:8001"
 GET = "app.alerts.watchlist_client.requests.get"
-ANSWER = {
-    "owners": {"7": ["AAPL", "MSFT"], "8": ["TSLA"]},
-    "prices": {"AAPL": 200.0, "MSFT": None, "TSLA": 300},
-}
 
 
 def fake_response(status_code=200, payload=None, json_error=None):
@@ -49,12 +44,25 @@ def test_fetch_snapshot_returns_the_answer():
         assert fetch_snapshot(BASE_URL, 2.0) == ANSWER
 
 
-def test_fetch_snapshot_sends_one_get_with_the_timeout():
+def test_fetch_snapshot_sends_one_get_with_the_timeout_and_the_token():
     with patch(GET) as get:
         get.return_value = fake_response(payload=ANSWER)
-        fetch_snapshot(BASE_URL + "/", 1.5)
+        fetch_snapshot(BASE_URL + "/", 1.5, "the-token")
 
-    get.assert_called_once_with(BASE_URL + "/internal/snapshot", timeout=1.5)
+    get.assert_called_once_with(
+        BASE_URL + "/internal/snapshot",
+        params={},
+        headers={"Authorization": "Bearer the-token"},
+        timeout=1.5,
+    )
+
+
+def test_fetch_snapshot_asks_for_each_ticker_once_in_a_fixed_order():
+    with patch(GET) as get:
+        get.return_value = fake_response(payload=ANSWER)
+        fetch_snapshot(BASE_URL, 1.5, "the-token", ["MSFT", "AAPL", "MSFT"])
+
+    assert get.call_args.kwargs["params"] == {"tickers": "AAPL,MSFT"}
 
 
 @pytest.mark.parametrize(
@@ -183,54 +191,11 @@ def test_both_calls_fail_when_the_watchlist_is_down():
 # service over real HTTP. Nothing is mocked from here on.
 
 
-class StubWatchlist:
-    """Stands in for the watchlist service. Answers on a free localhost port."""
-
-    def __init__(self):
-        self.answer = ANSWER
-        self.delay_seconds = 0.0
-        self.paths = []  # every request it received
-        stub = self
-
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                stub.paths.append(self.path)
-                time.sleep(stub.delay_seconds)
-                found = self.path == "/internal/snapshot"
-                body = json.dumps(stub.answer if found else {}).encode()
-                try:
-                    self.send_response(200 if found else 404)
-                    self.send_header("Content-Type", "application/json")
-                    self.send_header("Content-Length", str(len(body)))
-                    self.end_headers()
-                    self.wfile.write(body)
-                except OSError:
-                    pass  # the caller timed out and hung up, which is the point
-
-            def log_message(self, *args):
-                pass
-
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self.server.server_port}"
-        threading.Thread(target=self.server.serve_forever, daemon=True).start()
-
-    def stop(self):
-        """Like docker compose stop watchlist: the port stops answering."""
-        self.server.shutdown()
-        self.server.server_close()
-
-
-@pytest.fixture
-def stub():
-    stub = StubWatchlist()
-    yield stub
-    stub.stop()
-
-
-def alerts_for(db_path, url, owner_id=7, timeout_seconds=2.0):
-    """An AlertService wired the way the alerts service wires it for one request."""
+def alerts_for(db_path, url, owner_id=7, timeout_seconds=2.0, tickers=()):
+    """An AlertService wired the way create_app wires it for one request."""
+    token = issue_service_token(TEST_TOKEN_SECRET)
     watchlist = RemoteWatchlist(
-        Snapshot(lambda: fetch_snapshot(url, timeout_seconds)), owner_id
+        Snapshot(lambda: fetch_snapshot(url, timeout_seconds, token, tickers)), owner_id
     )
     return AlertService(AlertRepository(db_path, owner_id), watchlist, watchlist)
 
@@ -241,13 +206,19 @@ def test_a_rule_is_created_and_fires_across_the_seam(db_path, stub):
     # The watched check and the status of the new rule share one request.
     assert stub.paths == ["/internal/snapshot"]
 
-    service = alerts_for(db_path, stub.url)
+    service = alerts_for(db_path, stub.url, tickers=["AAPL"])
     fired = service.evaluate_all()
 
     assert [r["id"] for r in fired] == [rule["id"]]
     assert service.list_events()[0]["observed_price"] == 200.0
     # One more request for the whole check: watched tickers and prices together.
     assert len(stub.paths) == 2
+    assert stub.asked == ["", "AAPL"]
+
+
+def test_the_stub_refuses_a_caller_without_the_service_token(db_path, stub):
+    with pytest.raises(WatchlistUnavailable, match="401"):
+        fetch_snapshot(stub.url, 2.0, "not-a-token")
 
 
 def test_a_change_in_the_watchlist_is_seen_on_the_next_request(db_path, stub):

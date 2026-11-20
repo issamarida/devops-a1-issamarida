@@ -1,0 +1,10 @@
+[run]
+source = app
+# Thin route files and the composition root are left out, as in Assignment 1 (ADR-4).
+omit =
+    app/*/routes.py
+    app/__init__.py
+
+[report]
+fail_under = 70
+show_missing = true

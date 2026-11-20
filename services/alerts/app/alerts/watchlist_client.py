@@ -1,6 +1,8 @@
-"""Reaches the watchlist over HTTP, for when it runs as its own service.
+"""Reaches the watchlist service over HTTP. This is the seam between the two services.
 
-One GET returns every account's watched tickers and the price of each ticker:
+One GET returns every account's watched tickers and the prices that were asked for:
+
+    GET /internal/snapshot?tickers=AAPL,MSFT
 
     {"owners": {"7": ["AAPL", "MSFT"]}, "prices": {"AAPL": 187.44, "MSFT": null}}
 
@@ -27,13 +29,21 @@ def is_snapshot(body) -> bool:
     return all(isinstance(tickers, list) for tickers in owners.values())
 
 
-def fetch_snapshot(base_url: str, timeout_seconds: float) -> dict:
-    """One GET to the watchlist service. Raises WatchlistUnavailable on any failure."""
+def fetch_snapshot(base_url: str, timeout_seconds: float, token: str = "", tickers=()) -> dict:
+    """One GET to the watchlist service. Raises WatchlistUnavailable on any failure.
+
+    token proves to the watchlist that the alerts service is asking. tickers are
+    the ones whose prices are needed: leave it empty to only learn who watches what.
+    """
+    params = {"tickers": ",".join(sorted(set(tickers)))} if tickers else {}
     try:
         # The timeout covers connecting and each wait for data, so a stopped
         # or silent watchlist cannot hang the caller.
         response = requests.get(
-            base_url.rstrip("/") + SNAPSHOT_PATH, timeout=timeout_seconds
+            base_url.rstrip("/") + SNAPSHOT_PATH,
+            params=params,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=timeout_seconds,
         )
     except requests.RequestException:
         # Timeout, refused connection or unknown host. The error text is dropped.

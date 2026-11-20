@@ -148,3 +148,27 @@ class AlertRepository:
             raise
         finally:
             conn.close()
+
+
+def owners_with_active_rules(db_path) -> list[int]:
+    """Every account the poller has something to check for."""
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT owner_id FROM alert_rules WHERE is_active = 1 AND owner_id != 0 ORDER BY owner_id"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [row["owner_id"] for row in rows]
+
+
+def active_rule_tickers(db_path) -> list[str]:
+    """Every ticker some active rule is waiting on. These are the prices the poller asks for."""
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT ticker FROM alert_rules WHERE is_active = 1 AND owner_id != 0 ORDER BY ticker"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [row["ticker"] for row in rows]

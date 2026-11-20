@@ -1,5 +1,5 @@
--- Alerts domain. Only app/alerts/ reads or writes these tables.
--- ticker is plain text with no foreign key to watchlist_items, so alerts can move to its own service.
+-- Alerts domain. Only the alerts service reads or writes these tables.
+-- ticker is plain text: the watchlist lives in another service's database, so there is no foreign key to it.
 CREATE TABLE IF NOT EXISTS alert_rules (
     id         INTEGER PRIMARY KEY,
     owner_id   INTEGER NOT NULL DEFAULT 0,
@@ -23,3 +23,6 @@ CREATE TABLE IF NOT EXISTS alert_events (
     observed_price REAL    NOT NULL,
     triggered_at   TEXT    NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS rules_by_owner ON alert_rules(owner_id, is_active);
+CREATE INDEX IF NOT EXISTS events_by_owner ON alert_events(owner_id, triggered_at);

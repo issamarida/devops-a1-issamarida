@@ -1,7 +1,8 @@
-"""Interfaces shared between domains. Neither domain owns this file.
+"""What the alerts domain needs from the watchlist service, as interfaces.
 
-The alerts domain only knows about these interfaces. Any class that has
-the right method fits the interface without importing this file.
+The alerts domain only knows about these interfaces. RemoteWatchlist in
+app/alerts/watchlist_client.py fits both of them over HTTP, and the tests use
+small fakes. Any class that has the right method fits without importing this file.
 """
 
 from typing import Protocol

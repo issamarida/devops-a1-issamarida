@@ -48,7 +48,7 @@ class AlertService:
         try:
             threshold = float(threshold)
         except (TypeError, ValueError):
-            raise InvalidRuleError("Threshold must be a number.")
+            raise InvalidRuleError("Threshold must be a number.") from None
         if not math.isfinite(threshold) or threshold <= 0:
             raise InvalidRuleError("Threshold must be a number greater than 0.")
         if not self.watchlist_reader.is_watched(ticker):

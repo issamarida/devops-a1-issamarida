@@ -1,6 +1,6 @@
 """Checks the alert rules in the background every few seconds.
 
-Started from app.py only. create_app never starts it, so tests don't get a thread.
+Started from app.py only. create_app never starts it, so tests do not get a thread.
 """
 
 import logging
